@@ -9,6 +9,7 @@ and do abstract interpretation for pruning.
 If you use lesser version of these tools, success of build or execution is not guaranteed.
 
 * OPAM >= 2.1.2
+* libgmp
 
 ## Build
 
