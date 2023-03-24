@@ -1,0 +1,9 @@
+(executable
+ (public_name simba)
+ (name main)
+ (modes byte exe)
+ (libraries common synthLang dom analyzer synthBidir)
+)
+(env
+ (dev
+  (flags (:standard -w -26 -w -27 -w -32 -w -33 -w -50 -w -67))))

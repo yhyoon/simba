@@ -1,0 +1,8 @@
+(library
+ (name common)
+ (modules :standard)
+ (libraries batteries yojson dune-build-info)
+)
+(env
+ (dev
+  (flags (:standard -w -26 -w -27 -w -32 -w -33 -w -50 -w -67))))

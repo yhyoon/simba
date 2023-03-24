@@ -1,0 +1,7 @@
+(lang dune 3.3)
+(context
+    (opam
+        (switch simba)
+        (merlin)
+    )
+)

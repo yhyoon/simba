@@ -1,0 +1,10 @@
+(include_subdirs unqualified)
+
+(library
+ (name dom)
+ (modules :standard \ aBitSeqBackup)
+ (libraries common synthLang)
+)
+(env
+ (dev
+  (flags (:standard -w -26 -w -27 -w -32 -w -33 -w -49 -w -50 -w -67))))
