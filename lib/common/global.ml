@@ -14,12 +14,15 @@ and cli_options = {
     mutable debug               : bool;
     mutable exn_trace           : bool;
     mutable ex_all              : bool option;
+    mutable ex_cut              : int option;
     mutable init_comp_size      : int;
     mutable max_comp_size       : int;
     mutable gamma_size          : int;
     mutable topdown             : string;
     mutable get_size            : bool;
     mutable pruning_mode        : string;
+    mutable cegis_jump          : bool option;
+    mutable dt_predicate_order  : dt_predicate_order;
     mutable no_backward         : bool;
     mutable search2             : bool;
     mutable z3_seed             : int;
@@ -27,11 +30,14 @@ and cli_options = {
     mutable record_prune_count  : bool; (* Not implemented *)
     mutable diversity_names     : string;
     mutable report_json         : string option;
-    mutable log_silence         : bool;
-    mutable log_file_name       : string option;
+    mutable log_mode            : log_mode;
     mutable find_all            : bool; (* Deprecated *)
-    mutable fast_dt             : bool; (* Deprecated *)
 }
+and log_mode =
+    | LogSilence
+    | LogStdout
+    | LogStderr
+    | LogFile of string
 and synth_summary = {
     mutable compo_gen_time: float;
     mutable search_table_build_time: float;
@@ -60,6 +66,10 @@ and prune_trial_info = {
     mutable trial_reduced_inter: int64;
     mutable trial_reduced_complete: int64;
 }
+and dt_predicate_order =
+    | NormalEntropy
+    | FastEntropy
+    | HeuristicScore1
 
 let cegis_iter_initial = {count_top=BatMap.empty; count_sub=BatMap.empty; compo_pool_size=0}
 
@@ -73,12 +83,14 @@ let t: t = {
         debug               = false;
         exn_trace           = false;
         ex_all              = None;
+        ex_cut              = None;
         init_comp_size      = 1;
         max_comp_size       = 128;
         gamma_size          = 8;
         topdown             = "hole2";
         get_size            = false;
         pruning_mode        = "abstsem";
+        cegis_jump          = None;
         no_backward         = false;
         search2             = false;
         z3_seed             = 0;
@@ -86,17 +98,16 @@ let t: t = {
         record_prune_count  = false; (* Not implemented *)
         diversity_names     = "";
         report_json         = None;
-        log_silence         = false;
-        log_file_name       = None;
+        log_mode            = LogSilence;
         find_all            = false; (* Deprecated *)
-        fast_dt             = false; (* Deprecated *)
+        dt_predicate_order  = HeuristicScore1;
     };
     summary = {
         compo_gen_time = 0.0;
         search_table_build_time = 0.0;
         cegis_solver_call_cnt = 0;
         cegis_solver_call_time = 0.0;
-        cegis_iters = [cegis_iter_initial];
+        cegis_iters = [];
         final_io_pairs = 0;
         final_compo_pool_count = 0;
         final_max_compo_size = 0;
@@ -114,16 +125,33 @@ let t: t = {
     }
 }
 
+let parse_log_mode (s: string): log_mode =
+    if BatString.equal s "stdout" then
+        LogStdout
+    else if BatString.equal s "stderr" then
+        LogStderr
+    else
+        LogFile s
+
+let string_of_dt_predicate_order (o: dt_predicate_order): string =
+    match o with
+    | NormalEntropy -> "entropy"
+    | FastEntropy -> "fast_dt"
+    | HeuristicScore1 -> "own_heuristic"
+
 let cli_options_to_json(t: t): Safe.t =
     let l: (string * string) list =
         [
             ("debug", string_of_bool t.cli_options.debug);
-            ("pruning", t.cli_options.pruning_mode);
-            ("force_full_analysis", string_of_bool t.cli_options.force_full_analysis);
             ("init_comp_size", string_of_int t.cli_options.init_comp_size);
             ("max_comp_size", string_of_int t.cli_options.max_comp_size);
             ("gamma_size", string_of_int t.cli_options.gamma_size);
             ("topdown", t.cli_options.topdown);
+            ("pruning", t.cli_options.pruning_mode);
+            ("cegis_jump", string_of_bool (BatOption.default true t.cli_options.cegis_jump));
+            ("no_backward", string_of_bool t.cli_options.no_backward);
+            ("force_full_analysis", string_of_bool t.cli_options.force_full_analysis);
+            ("dt_predicate_order", string_of_dt_predicate_order t.cli_options.dt_predicate_order)
         ]
     in
     `List (BatList.map (fun pair -> `List [`String (fst pair) ; `String (snd pair)]) l)

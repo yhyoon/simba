@@ -117,7 +117,7 @@ let backward_analysis
     in
     let start_post_cond =
         if start_spot = [] then
-            AbstSig.alpha (BatList.map snd spec |> signature_of_const_list)
+            AbstSig.alpha_output_spec (BatList.map snd spec)
         else
             AbstState.lookup start_spot prev_semantics
     in

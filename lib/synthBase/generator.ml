@@ -112,7 +112,7 @@ let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 	Logger.g_with_increased_depth (fun () ->
 		let holes : (GrammarUtil.addr * Grammar.non_terminal) list = GrammarUtil.get_holes rule in
 		if not (BatList.is_empty holes) then begin
-			let rule_size = Grammar.size_of_rewrite rule in  
+			let rule_size = Grammar.size_of_rewrite rule in
 			let size_partitions = get_size_partitions holes (target_size - rule_size) components in
 			Logger.g_debug_f "rule_size = %d / size_partitiions = %s" rule_size (string_of_list (string_of_list (fun (n,s) -> Printf.sprintf "%s:%d" (Grammar.string_of_non_terminal n) s)) size_partitions);
 			let adder = Components.add_component components nt target_size in
@@ -154,10 +154,10 @@ let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 	Global.add_compo_gen_time (end_time -. start_time) Global.t
 
 let populate_initial_components (components: Components.component_pool) (desired_sig: SynthLang.Exprs.signature) (spec: SynthSpec.Specification.t)
-		(nt_rule_list: (Grammar.non_terminal * Grammar.rewrite) list) (min_size, max_size): unit =
+		(nt_rule_list: (Grammar.non_terminal * Grammar.rewrite) list) (max_size: int): unit =
 	gen_progress_logger := Some (Logger.create_g_periodic_logger 20000);
-	let size_one_processed_components = 
-		if min_size = 1 then
+	let _ = (* process size one components *)
+		begin
 			List.iter (fun (nt, rule) ->
 				if GrammarUtil.count_holes rule = 0 then
 					let adder = Components.add_component components nt 1 in
@@ -173,6 +173,7 @@ let populate_initial_components (components: Components.component_pool) (desired
 							adder expr signature
 					with Exprs.UndefinedSemantics -> ()
 			) nt_rule_list 
+		end
 	in
 	let rec iter size =
 		if (size <= max_size) then begin
@@ -182,8 +183,14 @@ let populate_initial_components (components: Components.component_pool) (desired
 			iter (size + 1)
 		end
 	in
-	iter min_size
-
+	iter 2;
+	BatList.iter (fun (nt, rule) ->
+			if BatSet.mem nt components.predicate_nts then begin
+				grow nt rule components desired_sig spec (max_size + 1);
+				grow nt rule components desired_sig spec (max_size + 2);
+			end
+			else ()
+		) nt_rule_list
 
 let symmetric_addr_of (addr: GrammarUtil.addr) (rewrite: Grammar.rewrite): GrammarUtil.addr option =
 	match BatList.rev addr with

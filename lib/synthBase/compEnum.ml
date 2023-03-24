@@ -38,8 +38,8 @@ let empty(): t = {
 }
 
 let make_ranged ?(iter_type: iter_type option = None) (lb: int) (ub: int) (comp: component_pool) (nt: Grammar.non_terminal): t =
-    let lb = max comp.min_size lb in
-    let ub = min comp.max_size ub in
+    let lb = max comp.min_term_size lb in
+    let ub = min comp.max_term_size ub in
     try
         let la = BatMap.find nt comp.nt_to_expr_size_ordered in
         let llr = BatArray.to_list !la |> BatList.drop lb in
@@ -63,7 +63,7 @@ let make_ranged ?(iter_type: iter_type option = None) (lb: int) (ub: int) (comp:
     with Not_found -> empty()
 
 let make_full (comp: component_pool) (nt: Grammar.non_terminal): t =
-    make_ranged comp.min_size comp.max_size comp nt
+    make_ranged comp.min_term_size comp.max_term_size comp nt
 
 let singleton (((expr, signature), size): (Exprs.expr * Exprs.signature) * int): t = {
     size_upper_bound = size;

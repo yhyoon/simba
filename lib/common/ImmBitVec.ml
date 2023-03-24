@@ -53,7 +53,8 @@ let foldi (f: int -> bool -> 'a -> 'a) (t: t) (z: 'a): 'a =
         let elem = t.bits.(!array_cursor) in
         let in_elem_index = ref 0 in
         while !index < t.bits_width && !in_elem_index < Sys.int_size do
-            result := f !index  ((1 lsl !in_elem_index) land elem <> 0) !result;
+            let b = (1 lsl !in_elem_index) land elem <> 0 in
+            result := f !index  b !result;
             incr in_elem_index;
             incr index;
         done;
@@ -213,19 +214,19 @@ let to_list (t: t): bool list =
 let of_list (bl: bool list): t =
     let width = BatList.length bl in
     let arr =
-        let lref = ref (BatList.rev bl) in
+        let lref = ref bl in
         let arr_length = (width - 1) / Sys.int_size + 1 in
-        BatArray.init arr_length (fun idx ->
+        let rec build_prepared_list idx result =
+            if idx < arr_length then begin
                 let v = ref 0 in
                 let cnt_in_elem = ref 0 in
                 begin try
                     while !cnt_in_elem < Sys.int_size do
                         begin match !lref with
                         | true :: tail ->
-                            v := (!v lsl 1) lor 1;
+                            v := !v lor (1 lsl !cnt_in_elem);
                             lref := tail;
                         | false :: tail ->
-                            v := !v lsl 1;
                             lref := tail;
                         | [] ->
                             raise Exit
@@ -235,15 +236,31 @@ let of_list (bl: bool list): t =
                 with Exit ->
                     ()
                 end;
-                !v 
-            )
+                build_prepared_list (succ idx) (!v :: result)
+            end
+            else
+                result |> BatList.rev
+        in
+        let prepared_list = build_prepared_list 0 [] in
+        BatArray.of_list prepared_list
     in
     {
         bits_width = width;
         bits = arr;
     }
 
+(* lower index at tail *)
 let to_string (t: t): string =
-    BatString.of_list (
-            foldi (fun _ b acc -> if b then '1' :: acc else '0' :: acc) t [] |> BatList.rev
-    )
+    map_as_list (fun idx b ->
+        let sep_spot = idx > 0 && idx mod Sys.int_size = 0 in
+        if b && sep_spot then
+            "1 "
+        else if b then
+            "1"
+        else if sep_spot then
+            "0 "
+        else
+            "0"
+    ) t
+    |> BatList.rev
+    |> string_of_list ~first:"b" ~last:"" ~sep:"" identity

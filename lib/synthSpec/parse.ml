@@ -226,7 +226,7 @@ let process_constraints
 		(* forall_var_map : variable name -> Var(name, ty) *) 
 		let exp = sexp_to_expr constraint_data id2var in
 		(* let _ = Logger.g_debug (string_of_expr exp) in *)
-		if get_op exp = GENERAL_FUNC "=" then
+		if get_op exp = GEN_CMP_OP CMP_EQ then
 			let children = get_children exp in
 			let arg0 = BatList.nth children 0 in
 			let arg1 = BatList.nth children 1 in
@@ -240,7 +240,7 @@ let process_constraints
 				(* let _ = Logger.g_debug (string_of_list string_of_expr inputs) in *)
 				(* let _ = Logger.g_debug (string_of_expr output) in                *)
 				let inputs = BatList.map expr2const inputs in   
-				(Specification.add_io_spec (inputs, output) spec, forall_var_map)
+				(Specification.add_io_spec (inputs, CDefined output) spec, forall_var_map)
 			(* Oracle spec: (f inputs) = (f' inputs) *)
 			else if (SynthLang.Exprs.is_function_expr arg0) && (SynthLang.Exprs.is_function_expr arg1) then 
 				let oracle_expr, target_expr = 

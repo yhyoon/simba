@@ -30,14 +30,15 @@ let process_cli_options (): unit =
 	end
 
 let init_logger(): unit =
-	if Global.t.cli_options.log_silence then
+	match Global.t.cli_options.log_mode with
+	| Global.LogSilence ->
 		Logger.activate_global Logger.null_handle
-	else
-		match Global.t.cli_options.log_file_name with
-		| None ->
-			Logger.activate_global (Logger.init_by_channel Global.t.start_time Global.t.cli_options.debug stderr)
-		| Some file ->
-			Logger.activate_global (Logger.init_by_file Global.t.start_time Global.t.cli_options.debug file)
+	| Global.LogStdout ->
+		Logger.activate_global (Logger.init_by_channel Global.t.start_time Global.t.cli_options.debug stdout)
+	| Global.LogStderr ->
+		Logger.activate_global (Logger.init_by_channel Global.t.start_time Global.t.cli_options.debug stderr)
+	| Global.LogFile file ->
+		Logger.activate_global (Logger.init_by_file Global.t.start_time Global.t.cli_options.debug file)
 
 let set_seed(): unit =
 	if Global.t.cli_options.z3_seed <> 0 then begin
@@ -52,7 +53,12 @@ let ready_global_variables(): unit = begin
 	set_seed();
 end
 
-let rec cegis problem spec additional_constraints =
+let rec cegis
+	?(jump_to_prev_iter: (int * int) option = None)
+	(problem: Parse.parse_result)
+	(spec: Specification.iospec)
+	(additional_constraints: SpecDiversity.verification_constraints)
+: Exprs.expr =
 	Global.begin_new_cegis_iter Global.t;
 	Global.t.summary.final_io_pairs <- List.length spec;
 	Logger.g_info_f "CEGIS iter: %d" (BatList.length Global.t.summary.cegis_iters);
@@ -60,26 +66,34 @@ let rec cegis problem spec additional_constraints =
 		BatList.iter (fun (inputs, output) ->
 			Logger.g_info_f "i:%s -> o:%s"
 				(string_of_list Exprs.string_of_const inputs) 
-				(Exprs.string_of_const output) 
+				(Exprs.string_of_const_opt output) 
 		) spec
 	);
-	let proposed_sol =
-		Bidirectional.synthesis problem spec
+	let (proposed_sol, jump_to_opt) =
+		Bidirectional.synthesis_pbe ~jump_to_prev_iter:jump_to_prev_iter problem.Parse.grammar spec
 	in
 	Logger.g_info_f "** Proposed candidate: %s **" (Exprs.string_of_expr proposed_sol);
 	(* spec' = spec + first mismatched input-output examples *)
 	let mismatched_opt =
-		BatList.find_opt (fun (inputs_from_problem, desired_output_from_problem) ->
-				try
-					let proposed_signature = Exprs.compute_signature [(inputs_from_problem, desired_output_from_problem)] proposed_sol in
-					Exprs.compare_signature proposed_signature (Exprs.sig_of_single_const desired_output_from_problem) <> 0
-				with Exprs.UndefinedSemantics ->
-					true
-			) problem.io_spec_total
+		BatList.find_opt (function
+				| (inputs_from_problem, Exprs.CDefined desired_output_from_problem) -> begin
+					try
+						let proposed_signature = Exprs.compute_signature [(inputs_from_problem, desired_output_from_problem)] proposed_sol in
+						Exprs.compare_signature proposed_signature (Exprs.sig_of_single_const desired_output_from_problem) <> 0
+					with Exprs.UndefinedSemantics ->
+						true
+					end
+				| _ -> true
+			) problem.Parse.io_spec_total
 	in
 	match mismatched_opt with
 	| Some mismatched ->
-		cegis problem (mismatched :: spec) additional_constraints
+		Logger.g_info_f "add counter example: %s" (Specification.string_of_io_spec [mismatched]); 
+		if BatOption.default true Global.t.cli_options.cegis_jump then begin
+			cegis ~jump_to_prev_iter:jump_to_opt problem (mismatched :: spec) additional_constraints
+		end
+		else
+			cegis problem (mismatched :: spec) additional_constraints
 	| None ->
 		match Specification.verify additional_constraints proposed_sol spec with
 		| None -> begin
@@ -88,15 +102,19 @@ let rec cegis problem spec additional_constraints =
 		end
 		| Some (cex, next_constraints) ->
 			Logger.g_info_f "add counter example: %s" (Specification.string_of_io_spec [cex]); 
-			let _ = assert (not (List.mem cex spec)) in  
-			cegis problem (cex :: spec) next_constraints
+			let _ = assert (not (List.mem cex spec)) in
+			if BatOption.default true Global.t.cli_options.cegis_jump then begin
+				cegis ~jump_to_prev_iter:jump_to_opt problem (cex :: spec) next_constraints
+			end
+			else
+				cegis problem (cex :: spec) next_constraints
 
 let report_result () =
 	(* detail in json *)
 	let _ =
 		match Global.t.cli_options.report_json with
 		| None ->
-			if not Global.t.cli_options.log_silence then
+			if not (Global.t.cli_options.log_mode = LogSilence) then
 				Report.export Logger.g_info Global.t
 		| Some filename ->
 			Report.export_to_file filename Global.t		
@@ -144,7 +162,12 @@ let main () =
 					(* get first one *)
 					[BatList.hd problem.io_spec_total]
 			in
-			let sol = cegis problem starting_spec diversity_constraints in
+			let sol = cegis
+				{problem with
+					io_spec_total = match Global.t.cli_options.ex_cut with
+						| None -> problem.io_spec_total
+						| Some n -> BatList.take n problem.io_spec_total}
+				starting_spec diversity_constraints in
 			Global.t.summary.found_solution_and_size <- Some (
 				Exprs.sexpstr_of_fun problem.args_map (Operators.op_to_string problem.target_function_name) sol,
 				Exprs.size_of_expr sol

@@ -33,10 +33,14 @@ type bool_op =
     | B_BIN_OP of bool_bin_op
     | B_UN_OP of bool_un_op
 
+type cmp_op =
+    | CMP_EQ | CMP_LT | CMP_LE | CMP_GT | CMP_GE
+
 type op =
     | BV_OP of bv_op
     | BOOL_OP of bool_op
     | TRI_OP of tri_op
+    | GEN_CMP_OP of cmp_op
     | GENERAL_FUNC of string
 
 let bv_bin_table: (string * bv_bin_op) BatSeq.t = BatList.to_seq [
@@ -77,6 +81,14 @@ let bool_bin_table: (string * bool_bin_op) BatSeq.t = BatList.to_seq [
     ("xor", B_XOR);
 ]
 
+let cmp_table: (string * cmp_op) BatSeq.t = BatList.to_seq [
+    ("=", CMP_EQ);
+    ("<", CMP_LT);
+    (">", CMP_GT);
+    ("<=", CMP_LE);
+    (">=", CMP_GE);
+]
+
 let bv_table: (string * bv_op) BatSeq.t =
     BatSeq.append
         (bv_bin_table |> (BatSeq.map (fun (s,o) -> (s, BV_BIN_OP o))))
@@ -98,6 +110,7 @@ let all_table: (string * op) BatSeq.t =
     (bv_table |> BatSeq.map (fun (s,o) -> (s, BV_OP o)))
     |> BatSeq.append (bool_table |> BatSeq.map (fun (s,o) -> (s, BOOL_OP o)))
     |> BatSeq.append (tri_table |> BatSeq.map (fun (s,o) -> (s, TRI_OP o)))
+    |> BatSeq.append (cmp_table |> BatSeq.map (fun (s,o) -> (s, GEN_CMP_OP o)))
 
 let bv_bin_map: (string, bv_bin_op) BatMap.t =
     bv_bin_table |> BatMap.of_seq
@@ -154,17 +167,13 @@ let comm_all_op: op BatSet.t =
     comm_int_op
     |> BatSet.union (BatSet.map (fun boolbin -> BOOL_OP (B_BIN_OP boolbin)) comm_bool_bin_op) 
     |> BatSet.union (BatSet.map (fun bvbin -> BV_OP (BV_BIN_OP bvbin)) comm_bv_bin_op)
+    |> BatSet.add (GEN_CMP_OP CMP_EQ)
 
 let is_commutative_bv_bin_op (bo: bv_bin_op): bool = BatSet.mem bo comm_bv_bin_op
 
 let is_commutative_bool_bin_op (bo: bool_bin_op): bool = BatSet.mem bo comm_bool_bin_op
 
 let is_commutative_op (op: op): bool = BatSet.mem op comm_all_op
-
-let general_cmp_op: op BatSet.t =
-    [GENERAL_FUNC "="; GENERAL_FUNC "<"; GENERAL_FUNC ">"; GENERAL_FUNC "<="; GENERAL_FUNC ">="] |> BatSet.of_list
-
-let is_general_cmp_op (op: op): bool = BatSet.mem op general_cmp_op
 
 let is_str_op (op: op): bool = match op with
     | GENERAL_FUNC op_str ->

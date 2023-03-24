@@ -14,7 +14,7 @@ let oracle_expr = ref (Const (CInt 0))
 (* oracle expr only with sygus builtins and parameter variables  *)
 let oracle_expr_resolved = ref (Const (CInt 0))
 
-type one_iospec = const list * const
+type one_iospec = const list * const_opt
 type iospec = one_iospec list
 
 (* spec for programming-by-example *)
@@ -23,6 +23,18 @@ type t = iospec
 let is_pbe_only(): bool = Stdlib.compare !oracle_expr (Const (CInt 0)) = 0
 
 let empty_spec = []
+
+let is_full_spec (iospec: iospec) =
+	iospec |>
+	BatList.map snd |>
+	BatList.for_all (function CDefined _ -> true | _ -> false)
+
+let to_verfiable_spec (iospec: iospec): (const list * const) list =
+	BatList.filter_map (function
+			| (input_spec, CDefined output_spec) ->
+				Some (input_spec, output_spec)
+			| _ -> None
+		) iospec
 
 let add_io_spec (inputs, output) spec = 
 	if (List.mem (inputs, output) spec) then spec 
@@ -34,11 +46,22 @@ let string_of_io_spec spec =
 	string_of_list (fun (inputs, output) ->
 		Printf.sprintf "i:%s -> o:%s"
 		(string_of_list string_of_const inputs) 
-		(string_of_const output) 
+		(string_of_const_opt output) 
 	) spec 
 
 let signature_of_spec spec =
-	BatList.map snd spec |> signature_of_const_list
+	if is_full_spec spec then
+		spec |>
+		to_verfiable_spec |>
+		BatList.map snd |>
+		signature_of_const_list
+	else
+		invalid_arg "partial spec cannot be signature"
+
+let signature_of_output_spec output_specs =
+	output_specs |>
+	BatList.map (function Some c -> c | _ -> invalid_arg "partial spec cannot be signature") |>
+	signature_of_const_list
 
 (* Using Z3 OCaml API *)
 let rec verify (additional_constraints: SpecDiversity.verification_constraints) (sol: expr) (spec: iospec): (one_iospec * SpecDiversity.verification_constraints) option =
@@ -59,7 +82,7 @@ let rec verify (additional_constraints: SpecDiversity.verification_constraints) 
   		in
 		let params_str = string_of_list ~first:"" ~last:"" ~sep:"\n" identity (BatList.rev params_str_list_rev) in
 		let (diversity_constraint_name_and_str_opt, additional_constraint_str, next_additional_constraints) =
-			SpecDiversity.process_verification_constraints additional_constraints spec params output_expr_str
+			SpecDiversity.process_verification_constraints additional_constraints (to_verfiable_spec spec) params output_expr_str
 		in
 		let diversity_constraint_str_opt =
 			match diversity_constraint_name_and_str_opt with
@@ -149,13 +172,13 @@ let rec verify (additional_constraints: SpecDiversity.verification_constraints) 
   					let cex_output = compute_signature [(cex_input, CInt 0)] !oracle_expr_resolved |> sig_hd in
 					Logger.g_debug_f "sol:%s" (BatOption.map_default string_of_const "N/A" sol_output_opt);
 					Logger.g_debug_f "oracle:%s" (string_of_const cex_output);
-					Logger.g_debug_f "cex : %s" (string_of_io_spec [(cex_input, cex_output)]);
+					Logger.g_debug_f "cex : %s" (string_of_io_spec [(cex_input, CDefined cex_output)]);
 					BatOption.may (fun so ->
 						if (Stdlib.compare so cex_output) = 0 then
 							failwith (Printf.sprintf "solution = oracle: %s = %s" (string_of_const so) (string_of_const cex_output))
 						else ()
 						) sol_output_opt;
-					Some ((cex_input, cex_output), next_additional_constraints)
+					Some ((cex_input, CDefined cex_output), next_additional_constraints)
 				with UndefinedSemantics -> begin
 					Logger.g_error_f "Z3 returned invalid cex, add to forbidden list and retry: %s" (string_of_list string_of_const cex_input);
 					verify {next_additional_constraints with forbidden_inputs = cex_input :: additional_constraints.forbidden_inputs} sol spec

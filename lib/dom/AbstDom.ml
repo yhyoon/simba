@@ -134,6 +134,40 @@ module AbstSig = struct
             Bool (ABoolSig.alpha bl)
         | _ -> Bot
 
+    let alpha_output_spec (output_specs: Exprs.const_opt list): t =
+        match output_specs with
+        | [] -> failwith "empty signature"
+        | Exprs.CDefined Exprs.CBV (len, _) :: _ | Exprs.CDontCare BV len :: _ -> begin
+            match len with
+            | 64 ->
+                BitVec64 (BatList.map (fun c -> match c with
+                        | Exprs.CDefined (Exprs.CBV (_, i)) -> RedProd64.from_int64 i
+                        | Exprs.CDontCare _ -> RedProd64.top_repr
+                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const_opt c)
+                    ) output_specs)
+            | 32 ->
+                BitVec32 (BatList.map (fun c -> match c with
+                        | Exprs.CDefined (Exprs.CBV (_, i)) -> RedProd32.from_int64 i
+                        | Exprs.CDontCare _ -> RedProd32.top_repr
+                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const_opt c)
+                    ) output_specs)
+            | _ ->
+                let module I = MaskedInt64(struct let size = len end) in
+                let module P = RedProd.Make(I) in
+                BitVecGeneral (len, BatList.map (fun c -> match c with
+                        | Exprs.CDefined (Exprs.CBV (_, i)) -> P.from_int64 i
+                        | Exprs.CDontCare _ -> P.top_repr
+                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const_opt c)
+                    ) output_specs)
+        end
+        | Exprs.CDefined CBool _ :: _ | Exprs.CDontCare Exprs.Bool :: _ ->
+            Bool (ABoolSig.of_list (BatList.map (fun c -> match c with
+                    | Exprs.CDefined (Exprs.CBool b) -> Elem.from_bool false b
+                    | Exprs.CDontCare _ -> Elem.B_Top
+                    | _ -> failwith_f "signature_of_const_list(%s in CBool list): kind mismatch" (Exprs.string_of_const_opt c)
+                ) output_specs))
+        | _ -> Bot
+
     let alphas (cl: Exprs.signature list): t =
         BatList.fold_left (fun a c -> join a (alpha c)) Bot cl
 
@@ -332,6 +366,8 @@ module AbstSig = struct
                     | _ -> fail_not_supported_op_expr op (BatList.map snd args)
                 in
                 forward_bool_bin_op bop arg0 arg1
+            | Operators.TRI_OP Operators.ITE ->
+                top_repr
             | _ -> fail_not_supported_op_expr op (BatList.map snd args)
         end with
             | OperandsBot -> Bot
@@ -405,6 +441,8 @@ module AbstSig = struct
                 | Operators.BOOL_OP Operators.B_BIN_OP bop, arg0 :: arg1 :: [] ->
                     let (p0, p1) = backward_bool_bin_op bop post arg0 arg1 in
                     [p0; p1]
+                | Operators.TRI_OP Operators.ITE, arg0 :: arg1 :: arg2 :: [] ->
+                    args
                 | _ ->
                     failwith (Printf.sprintf "not supported forward operation: operator %s with %d operands"
                         (Operators.op_to_string op)

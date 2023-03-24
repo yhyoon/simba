@@ -74,6 +74,19 @@ let insert_to_sorted_set (l: 'a list) (new_elem: 'a) (cmp: 'a -> 'a -> int): 'a 
     in
     insert_aux [] l
 
+(** assumption: l1 and l2 is sorted and no duplication *)
+let intersect_sorted_set ?(cmp: 'a -> 'a -> int = Stdlib.compare) (l1: 'a list) (l2: 'a list): 'a list =
+    let rec loop (l1: 'a list) (l2: 'a list) (acc_rev: 'a list): 'a list =
+        match l1, l2 with
+        | [], _ | _, [] -> BatList.rev acc_rev
+        | h1 :: t1, h2 :: t2 ->
+            let c = cmp h1 h2 in
+            if c < 0 then loop t1 l2 acc_rev
+            else if c > 0 then loop l1 t2 acc_rev
+            else loop t1 t2 (h1 :: acc_rev)
+    in
+    loop l1 l2 []
+
 let add_set_map (k: 'a) (v: 'b) (k_vset_map: ('a, 'b BatSet.t) BatMap.t): ('a, 'b BatSet.t) BatMap.t =
 	  let new_set =
         try
@@ -106,6 +119,19 @@ let common_prefix ?(is_equal:'a -> 'a -> bool = fun x y -> x = y) (l1: 'a list) 
 let list_fold : ('a -> 'b -> 'b) -> 'a list -> 'b -> 'b
 = fun f list init ->
     List.fold_left (flip f) init list
+
+let list_sub_sparse : 'a list -> int list -> 'a list
+= fun l ids ->
+    let rec aux idx l ids acc =
+        match l, ids with
+        | [], _ | _, [] -> BatList.rev acc
+        | h :: t, id :: ids_tail ->
+            if id = idx then
+                aux (succ idx) t ids_tail (h :: acc)
+            else
+                aux (succ idx) t ids acc
+    in
+    aux 0 l ids []
 
 let link_by_sep sep s acc = if acc = "" then s else acc ^ sep ^ s
 

@@ -202,7 +202,7 @@ let get_forbidden_template_by_solver (grammar: Grammar.grammar) (spec: Specifica
 			BatSet.add template forbidden_templates
 		end
 	in
-	List.fold_left f BatSet.empty spec
+	List.fold_left f BatSet.empty (Specification.to_verfiable_spec spec)
 
 let try_add_forbidden_template_by_solver (grammar: Grammar.grammar) (spec: Specification.t) (rewrite: Grammar.rewrite): unit =
 	let prev_card = BatSet.cardinal !forbidden_by_solver in

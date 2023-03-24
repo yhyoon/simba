@@ -291,7 +291,7 @@ let is_feasible_by_solver (grammar: Grammar.grammar) (spec: SynthSpec.Specificat
 					true
 				| _ ->
 					false
-			) spec
+			) (SynthSpec.Specification.to_verfiable_spec spec)
 		in
 		(* found unsat i/o pair -> infeasible *)
 		false

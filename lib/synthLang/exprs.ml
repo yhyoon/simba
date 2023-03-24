@@ -17,6 +17,10 @@ type const =
 	| CString of string
 	| CBool of bool
 
+type const_opt =
+	| CDontCare of exprtype
+	| CDefined of const
+
 (** program without nonterminal (=complete program) *)
 type expr =
 	| Param of int * exprtype (* position and type *)
@@ -116,6 +120,11 @@ let string_of_const (const: const): string =
 			string_of_bv len i
 	| CString s -> "\"" ^ s ^ "\""
 	| CBool b -> string_of_bool b
+
+let string_of_const_opt (const_opt: const_opt): string =
+	match const_opt with
+	| CDontCare _ -> "*"
+	| CDefined const -> string_of_const const
 
 (* signature = desired input or output list from iospec. e.g.) sig.(0) == a number from first io pair *)
 type signature =
@@ -362,41 +371,6 @@ let extract_int_int (values: signature list): (int list * int list) =
 let fun_apply_signature (op: op) (values: signature list): signature =
 	match op with
 	| GENERAL_FUNC op_str -> begin match op_str with
-		| "=" -> begin
-			match values with
-			| sig1 :: sig2 :: _ ->
-				SigBool (List.map2 (fun const1 const2 -> (Stdlib.compare const1 const2) = 0) (const_list_of_signature sig1) (const_list_of_signature sig2) |> ImmBitVec.of_list)
-			| _ ->
-				assert false
-		end
-		| "<" -> begin
-			match values with
-			| SigInt sig1 :: SigInt sig2 :: _ ->
-				SigBool (List.map2 (<) sig1 sig2 |> ImmBitVec.of_list)
-			| _ ->
-				assert false
-		end
-		| ">" -> begin
-			match values with
-			| SigInt sig1 :: SigInt sig2 :: _ ->
-				SigBool (List.map2 (>) sig1 sig2 |> ImmBitVec.of_list)
-			| _ ->
-				assert false
-		end
-		| "<=" -> begin
-			match values with
-			| SigInt sig1 :: SigInt sig2 :: _ ->
-				SigBool (List.map2 (<=) sig1 sig2 |> ImmBitVec.of_list)
-			| _ ->
-				assert false
-		end
-		| ">=" -> begin
-			match values with
-			| SigInt sig1 :: SigInt sig2 :: _ ->
-				SigBool (List.map2 (>=) sig1 sig2 |> ImmBitVec.of_list)
-			| _ ->
-				assert false
-		end
 		(** STRING theory **)
 		| "str.len" -> begin
 			match values with
@@ -488,6 +462,44 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 			SigString (map3 (fun bool const1 const2 -> if bool then const1 else const2) (ImmBitVec.to_list bools) sig1 sig2)
 		| _ ->
 			assert false
+	end
+	| GEN_CMP_OP cmp_op -> begin
+		match cmp_op with
+		| CMP_EQ -> begin
+			match values with
+			| sig1 :: sig2 :: _ ->
+				SigBool (List.map2 (fun const1 const2 -> (Stdlib.compare const1 const2) = 0) (const_list_of_signature sig1) (const_list_of_signature sig2) |> ImmBitVec.of_list)
+			| _ ->
+				assert false
+		end
+		| CMP_LT -> begin
+			match values with
+			| SigInt sig1 :: SigInt sig2 :: _ ->
+				SigBool (List.map2 (<) sig1 sig2 |> ImmBitVec.of_list)
+			| _ ->
+				assert false
+		end
+		| CMP_GT -> begin
+			match values with
+			| SigInt sig1 :: SigInt sig2 :: _ ->
+				SigBool (List.map2 (>) sig1 sig2 |> ImmBitVec.of_list)
+			| _ ->
+				assert false
+		end
+		| CMP_LE -> begin
+			match values with
+			| SigInt sig1 :: SigInt sig2 :: _ ->
+				SigBool (List.map2 (<=) sig1 sig2 |> ImmBitVec.of_list)
+			| _ ->
+				assert false
+		end
+		| CMP_GE -> begin
+			match values with
+			| SigInt sig1 :: SigInt sig2 :: _ ->
+				SigBool (List.map2 (>=) sig1 sig2 |> ImmBitVec.of_list)
+			| _ ->
+				assert false
+		end
 	end
 	(** Bool theory **)
 	| BOOL_OP B_BIN_OP B_AND -> begin
@@ -609,14 +621,14 @@ let rec evaluate_expr (spec_length: int) (param_valuation: (int, signature) BatM
 	| _ ->
 		failwith_f "evalute_expr to Var(%s): Var is only for SMT solver" (string_of_expr expr)
 
-let spec_to_param_map (spec: (const list * const) list): (int, signature) BatMap.t =
+let spec_to_param_map (spec: (const list * 'a) list): (int, signature) BatMap.t =
 	BatList.map fst spec
 	|> BatList.transpose
 	|> zip_with_index
 	|> BatList.map (map_snd signature_of_const_list)
 	|> BatList.to_seq |> BatMap.of_seq
 
-let compute_signature (spec: (const list * const) list) (expr: expr): signature =
+let compute_signature (spec: (const list * 'a) list) (expr: expr): signature =
 	try
 		evaluate_expr (BatList.length spec) (spec_to_param_map spec) expr
 	with _ ->

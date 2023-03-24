@@ -41,6 +41,11 @@ let is_function_rule (rule: rewrite): bool =
 	| FuncRewrite _ -> true 
 	| _ -> false 
 
+let is_ite_function_rule (rule: rewrite): bool =
+	match rule with
+	| FuncRewrite (TRI_OP ITE, _) -> true
+	| _ -> false
+
 let is_param_rule (rule: rewrite): bool = 
 	match rule with 
 	| ExprRewrite (Param _ ) -> true 
@@ -125,10 +130,10 @@ and ret_type_of_func_rewrite (op: op) (operands: rewrite list): exprtype =
 	end
 	| BOOL_OP _ ->
 		Bool
+	| GEN_CMP_OP _ ->
+		Bool
 	| GENERAL_FUNC op_str ->
-		if is_general_cmp_op op then
-			Bool
-		else if is_str_op op then
+		if is_str_op op then
 			String
 		else Int
 
@@ -194,7 +199,7 @@ let get_nt_rule_list (grammar: grammar): (non_terminal * rewrite) list =
 		(* |> BatSet.elements                                                      *)
 		(* |> List.map (fun rule -> (nt, rule))                                    *)
 	) topological_sorted_nts |> List.flatten 
-	
+
 
 let start_nt: non_terminal = NT "Start"
 
