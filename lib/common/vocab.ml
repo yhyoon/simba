@@ -18,22 +18,83 @@ let map_snd (f: 'b -> 'c) ((a,b): 'a * 'b): 'a * 'c =
 (* formatted fail message exception *)
 let failwith_f fmt = Printf.ksprintf failwith fmt
 
+let failcond_f failcond fmt =
+    if failcond then
+        Printf.ksprintf failwith fmt
+    else
+        Printf.ksprintf ignore fmt
+
 (* use array as immutable-like *)
-(* append element to copied array *)
+(** append element to copied array *)
 let arr_copy_add (e: 'a) (arr: 'a array): 'a array =
     let l = BatArray.length arr in
     BatArray.init (l + 1) (fun idx -> if idx < l then arr.(idx) else e)
 
-(* copy array and set arr.(idx) = e (if idx is not in array range, just copy) *)
-let arr_copy_set (idx: int) (e: 'a) (arr: 'a array): 'a array =
-    BatArray.init (BatArray.length arr) (fun i -> if i = idx then e else arr.(i))
+(**
+arr_copy_set idx new_elem arr -> updated_arr.
 
-(* copy array and set arr.(idx) = e (if idx is not in array range, extend spaces with default value) *)
-let arr_copy_set_extend (idx: int) (e: 'a) (default: 'a) (arr: 'a array): 'a array =
-    if idx < BatArray.length arr then
+If idx < len(arr) and arr.(idx) <> e (not same obj in memory), copy arr and set arr.(idx) = e and return copied array.
+Otherwise, do nothing and just return arr
+    *)
+let arr_copy_set (idx: int) (e: 'a) (arr: 'a array): 'a array =
+    if idx < BatArray.length arr && arr.(idx) != e then
         BatArray.init (BatArray.length arr) (fun i -> if i = idx then e else arr.(i))
     else
+        arr
+
+(**
+arr_copy_update idx elem_updater arr -> updated_arr.
+
+If idx < len(arr) and arr.(idx) <> f e (not same obj in memory), copy arr and set copied_arr.(idx) = f e and return copied array.
+Otherwise, do nothing and just return arr
+*)
+let arr_copy_update (idx: int) (f: 'a -> 'a) (arr: 'a array): 'a array =
+    if idx < BatArray.length arr then
+        let e' = f (arr.(idx)) in
+        if arr.(idx) != e' then
+            BatArray.init (BatArray.length arr) (fun i -> if i = idx then e' else arr.(i))
+        else
+            arr
+    else
+        arr
+
+(**
+arr_copy_set_extend idx e default arr -> updated_arr.
+
+If idx < len(arr) and arr.(idx) <> e (not same obj in memory), copy arr and set copied_arr.(idx) = e and return copied array.
+If idx >= len(arr), copy arr with extended length to contain idx with default value and set arr.(idx) = e and return copied array.
+Otherwise, do nothing and just return arr
+    *)
+let arr_copy_set_extend (idx: int) (e: 'a) (default: 'a) (arr: 'a array): 'a array =
+    if idx >= BatArray.length arr then
         BatArray.init (idx + 1) (fun i -> if i = idx then e else if i < BatArray.length arr then arr.(i) else default)
+    else if arr.(idx) != e then
+        BatArray.init (BatArray.length arr) (fun i -> if i = idx then e else arr.(i))
+    else
+        arr
+
+(**
+arr_copy_set_extend idx elem_updater default arr -> updated_arr.
+
+If idx < len(arr) and arr.(idx) <> f e (not same obj in memory), copy arr and set copied_arr.(idx) = f e and return copied array.
+If idx >= len(arr), copy arr with extended length to contain idx with default value and set copied_arr.(idx) = f default and return copied array.
+Otherwise, do nothing and just return arr
+    *)
+let arr_copy_update_extend (idx: int) (f: 'a -> 'a) (default: 'a) (arr: 'a array): 'a array =
+    let e' =
+        if idx < BatArray.length arr then
+            f (arr.(idx))
+        else
+            f default
+    in
+    if idx >= BatArray.length arr then
+        BatArray.init (idx + 1) (fun i ->
+            if i = idx then e' else if i < BatArray.length arr then arr.(i) else default
+        )
+    else if arr.(idx) != e' then
+        BatArray.init (BatArray.length arr) (fun i -> if i = idx then e' else arr.(i))
+    else
+        arr 
 
 let read_lines (filename: string) : string list =
     let ic = open_in filename in

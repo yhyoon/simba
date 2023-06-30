@@ -192,7 +192,7 @@ let get_nt_rule_list (grammar: grammar): (non_terminal * rewrite) list =
 			if (List.mem nt lst) then lst 
 			else lst @ [nt]  
 		) ntgraph []
-	in   
+	in
 	List.map (fun nt -> 
 		List.filter (fun (nt', _) -> is_equal_nt nt nt') nt_rule_list
 		(* (try BatMap.find nt grammar with _ -> failwith (string_of_rewrite nt))  *)
