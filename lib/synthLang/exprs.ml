@@ -381,8 +381,11 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 		end
 		| "str.to.int" -> begin
 			match values with
-			| SigString sl :: _ ->
-				SigInt (BatList.map int_of_string sl)
+			| SigString sl :: _ -> begin try
+			    SigInt (BatList.map int_of_string sl)
+        with Failure _ ->
+          raise UndefinedSemantics
+        end
 			| _ ->
 				assert false
 		end
@@ -394,7 +397,14 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 		end
 		| "str.at" -> begin
 			let (strs, nums) = extract_str_int values in
-			SigString (List.map2 (fun str num -> Printf.sprintf "%c" str.[num]) strs nums)
+			SigString (List.map2 (fun str num ->
+					Printf.sprintf
+						"%c"
+						(if 0 <= num && num < BatString.length str then
+							str.[num]
+						else
+							raise UndefinedSemantics)
+				) strs nums)
 		end
 		| "str.++" -> begin
 			let (str1s, str2s) = extract_str_str values in
@@ -414,7 +424,12 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 		end
 		| "str.indexof" -> begin
 			let (str1s, str2s, num1s) = extract_str_str_int values in
-			SigInt (map3 (fun str1 num1 str2 -> try BatString.find_from str1 num1 str2 with Not_found -> -1) str1s num1s str2s)
+			SigInt (map3 (fun str1 num1 str2 ->
+          try BatString.find_from str1 num1 str2
+          with
+            | Not_found -> -1
+            | Invalid_argument _ -> raise UndefinedSemantics) str1s num1s str2s
+      )
 		end
 		| "str.replace" -> begin
 			let (str1s, str2s, str3s) = extract_str_str_str values in
@@ -424,8 +439,10 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 			let (str1s, num1s, num2s) = extract_str_int_int values in
 			SigString (
 				map3 (fun str1 num1 num2 ->
-					let num2 = min (String.length str1 - num1) num2 in
-					try BatString.sub str1 num1 num2 with Invalid_argument _ -> ""
+          if String.length str1 - num1 < num2 then raise UndefinedSemantics
+          else
+					  let num2 = min (String.length str1 - num1) num2 in
+					  try BatString.sub str1 num1 num2 with Invalid_argument _ -> ""
 				) str1s num1s num2s
 			)
 		end
