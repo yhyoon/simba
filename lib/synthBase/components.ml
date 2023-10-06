@@ -4,8 +4,8 @@ open SynthLang
 
 type expr_set = {
     s: Exprs.ExprSigSet.t;
-    mutable l: (Exprs.expr * Exprs.signature) list option; (* lazy cache for BatSet.to_list result *)
-    mutable c: int option; (* lazy cache for BatSet.cardinal result *)
+    mutable l: (Exprs.expr * Exprs.signature) list option; (* lazy cache for ExprSigSet.to_list result *)
+    mutable c: int option; (* lazy cache for ExprSigSet.cardinal result *)
 }
 
 let expr_set_empty: expr_set = {s = Exprs.ExprSigSet.empty; l=Some []; c=Some 0;}
@@ -34,11 +34,11 @@ let expr_set_cardinal (expr_set: expr_set): int =
     end
 
 (**
-  For max term size is N,
+  For max term size = N,
   sized_expr_set = (empty_set, expr_set_size_1, ..., expr_set_size_N)
   We will use this array like immutable (always copy to modification)
   why use array? to lookup by size in constant time
-    *)
+*)
 type sized_expr_set = expr_set array
 
 let sized_expr_set_empty: sized_expr_set = BatArray.make 2 expr_set_empty
@@ -50,19 +50,6 @@ let sized_expr_set_add (la: sized_expr_set) (expr: Exprs.expr) (signature: Exprs
         la
 
 type nt_sig_to_expr = (Grammar.non_terminal, Exprs.expr Exprs.SignatureMap.t) BatMap.t
-
-let ns2e_empty = BatMap.empty
-
-let ns2e_add ((nt, s): Grammar.non_terminal * Exprs.signature) (e: Exprs.expr) (m: nt_sig_to_expr): nt_sig_to_expr =
-    let sub_map = BatMap.find_default Exprs.SignatureMap.empty nt m in
-    BatMap.add nt (Exprs.SignatureMap.add s e sub_map) m
-
-let ns2e_mem ((nt, s): Grammar.non_terminal * Exprs.signature) (m: nt_sig_to_expr): bool =
-    try
-        let sub_map = BatMap.find nt m in
-        Exprs.SignatureMap.mem s sub_map
-    with Not_found ->
-        false
 
 let ns2e_find ((nt, s): Grammar.non_terminal * Exprs.signature) (m: nt_sig_to_expr): Exprs.expr =
     let sub_map = BatMap.find nt m in
@@ -140,7 +127,6 @@ let add_components (t: component_pool) (nt: Grammar.non_terminal) (term_size: in
     let building_t = ref size_bound_updated_t in
     let _ =
         BatEnum.iter (fun (expr, signature) ->
-            (* try *)
                 let next_sub_map =
                     Exprs.SignatureMap.update_stdlib signature (function
                         | None -> begin
@@ -177,29 +163,6 @@ let add_components (t: component_pool) (nt: Grammar.non_terminal) (term_size: in
                 in
                 building_t := {!building_t with
                     nt_sig_to_expr = BatMap.add nt next_sub_map (!building_t).nt_sig_to_expr}
-            (* with Not_found -> begin
-                (* Logger.g_info_f "add_component: %s -> %s, result:" (Exprs.string_of_signature signature) (Exprs.string_of_expr expr);
-                SigSearch.dump_table search; *)
-                let _ =
-                    begin try
-                        let sized_expr_set = BatMap.find nt t.nt_to_expr_size_ordered in
-                        building_t := {!building_t with nt_to_expr_size_ordered =
-                            BatMap.add nt (sized_expr_set_add sized_expr_set expr signature term_size) t.nt_to_expr_size_ordered
-                        }
-                    with Not_found ->
-                        ()
-                    end
-                in
-                building_t := {!building_t with
-                    nt_sig_to_expr =
-                        ns2e_add (nt, signature) expr (!building_t).nt_sig_to_expr;
-                    nt_sig_search =
-                        BatMap.add nt
-                            (SigSearch.add signature expr signature term_size
-                                (BatMap.find nt (!building_t).nt_sig_search))
-                            (!building_t).nt_sig_search;
-                }
-            end *)
         ) candidate_components
     in
     !building_t
