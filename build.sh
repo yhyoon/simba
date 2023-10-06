@@ -1,3 +1,6 @@
+#!/bin/bash
+set -euxo pipefail
+
 dune build
 dune install --prefix=_install
 ln -s _install/bin/simba simba.exe

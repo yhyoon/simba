@@ -3,6 +3,10 @@
 Simba(**S**ynthesis from **I**nductive specification e**M**powered by **B**idirectional **A**bstract interpretation)
 is an inductive program synthesizer using forward and backward abstract interpretation for pruning search spaces.
 
+Research paper: at [ACM DL](https://dl.acm.org/doi/10.1145/3591288)
+
+Research artifact: [Zenodo](https://doi.org/10.5281/zenodo.7816533) and [Github](https://github.com/yhyoon/pldi2023-artifact)
+
 ## Dependencies
 
 * [Xcode Command Line Tools](https://mac.install.guide/commandlinetools/4.html) and [Homebrew](https://brew.sh/index)
