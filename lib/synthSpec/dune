@@ -1,7 +1,7 @@
 (library
  (name synthSpec)
  (modules :standard)
- (libraries common synthLang z3 core_kernel)
+ (libraries common synthLang unix z3 core_kernel)
 )
 (env
  (dev

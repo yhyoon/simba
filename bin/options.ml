@@ -34,6 +34,7 @@ let options = [
 	("-force_full_analysis", Arg.Unit (fun () -> o.force_full_analysis <- true), "Do not reuse prev analysis result in static analysis (only for experiment)");
 	("-record_prune_count", Arg.Unit (fun () -> o.record_prune_count <- true), "Count approximated iterations pruned by concretization-based component pick(only for experiment)");
 	("-diversity", Arg.String (fun s -> o.diversity_names <- s), "Comma-separated sequence of diversity constraint strategy names(special keyword 'defaut'=force_ubig,force_pos_sbig,force_neg_odd,force_even,force_minus_one)");
+	("-z3cli", Arg.String (fun s -> o.z3cli <- Some s), "Use Z3 via command line interface(instead of ocamlbinding library)");
 	("-log", Arg.String (fun s ->
 		o.log_mode <- parse_log_mode s), "Set log mode. stdout: print to standard output, stderr: print to standard error, otherwise: given argument will be log file name(default=do not print log)");
 	("-report_json", Arg.String (fun s -> o.report_json <- Some s), "Report result to json file");

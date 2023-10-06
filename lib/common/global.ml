@@ -27,6 +27,7 @@ and cli_options = {
     mutable search2             : bool;
     mutable z3_seed             : int;
     mutable force_full_analysis : bool;
+    mutable z3cli               : string option;
     mutable record_prune_count  : bool; (* Not implemented *)
     mutable diversity_names     : string;
     mutable report_json         : string option;
@@ -95,6 +96,7 @@ let t: t = {
         search2             = false;
         z3_seed             = 0;
         force_full_analysis = false;
+        z3cli               = None;
         record_prune_count  = false; (* Not implemented *)
         diversity_names     = "";
         report_json         = None;
