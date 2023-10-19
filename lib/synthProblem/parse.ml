@@ -12,7 +12,7 @@ type parse_result = {
 	args_map: (string, expr) BatMap.t;
 	grammar: (non_terminal, rewrite BatSet.t) BatMap.t;
 	forall_var_map: (string, expr) BatMap.t;
-	io_spec_total: Specification.iospec;
+	spec_total: Specification.t;
 }
 
 let debug_string_of_sexp (sexp: Sexp.t): string =
@@ -216,7 +216,7 @@ let process_constraints
 	(constraints_data: Sexp.t list list)
 	(macro_instantiator: (op, expr) BatMap.t)
 	(id2var: (string, expr) BatMap.t)
-: Specification.iospec * (string, expr) BatMap.t =
+: Specification.t * (string, expr) BatMap.t =
 	BatList.fold_left (fun (spec, forall_var_map) constraint_data ->
 		let constraint_data =
 		  match constraint_data with
@@ -232,18 +232,18 @@ let process_constraints
 			let arg1 = BatList.nth children 1 in
 			(* PBE spec: (f input) = output  *)
 			if (SynthLang.Exprs.is_const_expr arg0) || (SynthLang.Exprs.is_const_expr arg1) then
-				let inputs, output = 
+				let ex_input, ex_output = 
 					if (get_op arg0 = target_function_name) then 
 						(get_children arg0, expr2const arg1)
 					else (get_children arg1, expr2const arg0)
 				in
 				(* let _ = Logger.g_debug (string_of_list string_of_expr inputs) in *)
 				(* let _ = Logger.g_debug (string_of_expr output) in                *)
-				let inputs = BatList.map expr2const inputs in   
-				(Specification.add_io_spec (inputs, CDefined output) spec, forall_var_map)
+				let ex_input = BatList.map expr2const ex_input in   
+				(Specification.add_ex_io (ex_input, ex_output) spec, forall_var_map)
 			(* Oracle spec: (f inputs) = (f' inputs) *)
 			else if (SynthLang.Exprs.is_function_expr arg0) && (SynthLang.Exprs.is_function_expr arg1) then 
-				let oracle_expr, target_expr = 
+				let oracle_expr, target_expr =
 					if get_op arg0 = target_function_name then 
 						arg1, arg0
 					else arg0, arg1 
@@ -251,8 +251,7 @@ let process_constraints
 				let oracle_name = get_op oracle_expr in   
 				let oracle_expr_resolved = try BatMap.find oracle_name macro_instantiator with _ -> assert false in  
 				(* let _ = Logger.g_debug_f "(assert (= %s %s))" (SynthLang.Exprs.string_of_expr oracle_expr_resolved) (SynthLang.Exprs.string_of_expr target_expr) in  *)
-				let _ = Specification.oracle_expr := oracle_expr in
-				let _ = Specification.oracle_expr_resolved := oracle_expr_resolved in
+				let spec = Specification.add_oracle_spec oracle_expr oracle_expr_resolved spec in
 				(* forall_var_map : variable name -> Param(int, ty) *)
 				let _, forall_var_map = 
 					let args = get_children oracle_expr in 
@@ -261,7 +260,7 @@ let process_constraints
 						(i + 1, BatMap.add name (Param(i, SynthLang.Exprs.type_of_expr var_expr)) m)  
 					) (0, BatMap.empty) args
 				in
-				(Specification.add_trivial_examples grammar spec, forall_var_map)
+				(spec, forall_var_map)
 			else
 				failwith ("Not supported: synth-fun is missing")
 		else failwith ("Not supported: not a SyGuS-pbe specification")
@@ -316,12 +315,12 @@ let parse (file: string): parse_result =
 		(* Logger.g_debug (string_of_list debug_string_of_sexp (BatSet.choose constraints_data)); *)
 		process_constraints grammar target_function_name constraints_data macro_instantiator id2var
 	in
-	Logger.g_debug (Specification.string_of_io_spec spec);
+	Logger.g_debug (Specification.string_of_ex_io_list spec.spec_pbe);
 	{
 		macro_instantiator = macro_instantiator;
 		target_function_name = target_function_name;
 		args_map = args_map;
 		grammar = grammar;
 		forall_var_map = forall_var_map;
-		io_spec_total = spec
+		spec_total = spec
 	}

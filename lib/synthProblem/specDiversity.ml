@@ -5,11 +5,10 @@ open Vocab
 open Int64Util
 open SynthLang.Exprs
 
-type one_iospec = const list * const
-type iospec = one_iospec list
+type io_example = const list * const
 
 type diversity_constr_required =
-	| RequiredFromWhole of (iospec -> bool)
+	| RequiredFromWhole of (io_example list -> bool)
 	| RequiredFromEachOutput of (const -> bool)
 
 type diversity_constraint = {
@@ -18,13 +17,13 @@ type diversity_constraint = {
 	output_constraint_gen: string -> string;
 }
 
-let is_required (dc: diversity_constraint) (spec: iospec): bool =
+let is_required (dc: diversity_constraint) (spec: io_example list): bool =
 	match dc.check_unsat_constraint with
 	| RequiredFromWhole check -> check spec
 	| RequiredFromEachOutput check_each ->
 		BatList.for_all check_each (BatList.map snd spec)
 
-let rec process_diversity (dcs: diversity_constraint list) (output_expr_string: string) (spec: iospec): ((string * string) option * diversity_constraint list) =
+let rec process_diversity (dcs: diversity_constraint list) (output_expr_string: string) (spec: io_example list): ((string * string) option * diversity_constraint list) =
 	match dcs with
 	| [] ->
 		(None, [])
@@ -211,7 +210,7 @@ let verification_constraints_from_names (names: string): verification_constraint
 
 let process_verification_constraints
 	(additional_constraints: verification_constraints)
-	(spec: iospec)
+	(spec: io_example list)
 	(params: expr BatSet.t)
 	(output_expr_string: string)
 : ((string * string) option * string list * verification_constraints) =

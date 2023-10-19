@@ -17,10 +17,6 @@ type const =
 	| CString of string
 	| CBool of bool
 
-type const_opt =
-	| CDontCare of exprtype
-	| CDefined of const
-
 (** program without nonterminal (=complete program) *)
 type expr =
 	| Param of int * exprtype (* position and type *)
@@ -120,11 +116,6 @@ let string_of_const (const: const): string =
 			string_of_bv len i
 	| CString s -> "\"" ^ s ^ "\""
 	| CBool b -> string_of_bool b
-
-let string_of_const_opt (const_opt: const_opt): string =
-	match const_opt with
-	| CDontCare _ -> "*"
-	| CDefined const -> string_of_const const
 
 (* signature = desired input or output list from iospec. e.g.) sig.(0) == a number from first io pair *)
 type signature =
@@ -638,16 +629,16 @@ let rec evaluate_expr (spec_length: int) (param_valuation: (int, signature) BatM
 	| _ ->
 		failwith_f "evalute_expr to Var(%s): Var is only for SMT solver" (string_of_expr expr)
 
-let spec_to_param_map (spec: (const list * 'a) list): (int, signature) BatMap.t =
-	BatList.map fst spec
+let spec_to_param_map (spec: const list list): (int, signature) BatMap.t =
+	spec
 	|> BatList.transpose
 	|> zip_with_index
 	|> BatList.map (map_snd signature_of_const_list)
 	|> BatList.to_seq |> BatMap.of_seq
 
-let compute_signature (spec: (const list * 'a) list) (expr: expr): signature =
+let compute_signature (input_spec: const list list) (expr: expr): signature =
 	try
-		evaluate_expr (BatList.length spec) (spec_to_param_map spec) expr
+		evaluate_expr (BatList.length input_spec) (spec_to_param_map input_spec) expr
 	with _ ->
 		raise UndefinedSemantics
 

@@ -54,7 +54,7 @@ let aug_plug_rewrite (rule: aug_rewrite) (instances: (GrammarUtil.addr * aug_rew
 	in
 	plug_sub [] rule instances	
 
-let wrap_aug_rewrite (spec: SynthSpec.Specification.t) (rewrite: Grammar.rewrite): aug_rewrite =
+let wrap_aug_rewrite (spec: AugSpec.ex_input list) (rewrite: Grammar.rewrite): aug_rewrite =
 	let rec wrap_aug_rewrite_sub rewrite =
 		match rewrite with
 		| Grammar.NTRewrite nt -> AugNT nt
@@ -97,11 +97,13 @@ let gen_progress_log (s_lazy: unit -> string) =
 	| None -> ()
 	| Some p -> Logger.info_period p s_lazy 
 
+exception SolutionFoundInGenerator of int * int * Exprs.expr (** max compo size, compo pool count, sol *)
+
 (* using components found so far, generate candidates of size `target_size' *)				
 let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 	(components: Components.component_pool)
 	(desired_sig: Exprs.signature)
-	(spec: SynthSpec.Specification.t)
+	(spec: AugSpec.ex_input list)
 	(target_size: int): Components.component_pool =
 	let start_time = Unix.gettimeofday () in
 	let aug_rule = wrap_aug_rewrite spec rule in
@@ -137,7 +139,7 @@ let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 								let (new_expr, signature) = aug_plug aug_rule instances in
 								if Exprs.compare_signature desired_sig signature = 0 then begin
 									Logger.g_info_f "during growing components pool with target size %d, found solution within %d components" target_size (Components.get_num_total_components components);
-									raise (SynthSpec.Specification.SolutionFound new_expr)
+									raise (SolutionFoundInGenerator (target_size, Components.get_num_total_components components,new_expr))
 								end
 								else
 									Components.add_components building_cs nt target_size (BatEnum.singleton (new_expr, signature))
@@ -168,8 +170,11 @@ let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 
 let populate_initial_components
 	(components: Components.component_pool)
-	(desired_sig: SynthLang.Exprs.signature) (spec: SynthSpec.Specification.t)
-		(nt_rule_list: (Grammar.non_terminal * Grammar.rewrite) list) (max_size: int): Components.component_pool =
+	(desired_sig: SynthLang.Exprs.signature)
+	(spec: AugSpec.ex_input list)
+	(nt_rule_list: (Grammar.non_terminal * Grammar.rewrite) list)
+	(max_size: int)
+: Components.component_pool =
 	gen_progress_logger := Some (Logger.create_g_periodic_logger 20000);
 	let components_1 =
 		(* process size one components *)
@@ -183,7 +188,7 @@ let populate_initial_components
 						let signature = Exprs.compute_signature spec expr in
 						if Exprs.compare_signature desired_sig signature = 0 then begin
 							Logger.g_info_f "During populating size 1 components, found #%d component as solution" (Components.get_num_total_components components);
-							raise (SynthSpec.Specification.SolutionFound expr)
+							raise (SolutionFoundInGenerator (1, Components.get_num_total_components components, expr))
 						end
 						else
 							adder (BatEnum.singleton (expr, signature))

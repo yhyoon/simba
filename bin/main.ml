@@ -4,7 +4,7 @@ open Vocab
 open Options
 
 open SynthLang
-open SynthSpec
+open SynthProblem
 open SynthBidir
 
 let process_cli_options (): unit =
@@ -55,59 +55,65 @@ end
 
 let rec cegis
 	?(jump_to_prev_iter: (int * int) option = None)
-	(problem: Parse.parse_result)
-	(spec: Specification.iospec)
+	(spec: SynthBase.AugSpec.t)
 	(additional_constraints: SpecDiversity.verification_constraints)
 : Exprs.expr =
 	Global.begin_new_cegis_iter Global.t;
-	Global.t.summary.final_io_pairs <- List.length spec;
+	Global.t.summary.final_io_pairs <- List.length spec.sem_spec.spec_cex;
+
 	Logger.g_info_f "CEGIS iter: %d" (BatList.length Global.t.summary.cegis_iters);
 	Logger.g_with_increased_depth (fun () ->
 		BatList.iter (fun (inputs, output) ->
 			Logger.g_info_f "i:%s -> o:%s"
 				(string_of_list Exprs.string_of_const inputs) 
-				(Exprs.string_of_const_opt output) 
-		) spec
+				(SynthBase.AugSpec.string_of_output_spec output) 
+		) spec.sem_spec.spec_cex
 	);
 	let (proposed_sol, jump_to_opt) =
-		Bidirectional.synthesis_pbe ~jump_to_prev_iter:jump_to_prev_iter problem.Parse.grammar spec
+		Bidirectional.synthesis_pbe ~jump_to_prev_iter:jump_to_prev_iter spec
 	in
+
 	Logger.g_info_f "** Proposed candidate: %s **" (Exprs.string_of_expr proposed_sol);
 	(* spec' = spec + first mismatched input-output examples *)
 	let mismatched_opt =
 		BatList.find_opt (function
-				| (inputs_from_problem, Exprs.CDefined desired_output_from_problem) -> begin
+				| (inputs_from_problem, desired_output_from_problem) -> begin
 					try
-						let proposed_signature = Exprs.compute_signature [(inputs_from_problem, desired_output_from_problem)] proposed_sol in
+						let proposed_signature = Exprs.compute_signature [inputs_from_problem] proposed_sol in
 						Exprs.compare_signature proposed_signature (Exprs.sig_of_single_const desired_output_from_problem) <> 0
 					with Exprs.UndefinedSemantics ->
 						true
 					end
-				| _ -> true
-			) problem.Parse.io_spec_total
+			) spec.sem_spec.original_spec.spec_pbe
 	in
+
 	match mismatched_opt with
 	| Some mismatched ->
-		Logger.g_info_f "add counter example: %s" (Specification.string_of_io_spec [mismatched]); 
-		if BatOption.default true Global.t.cli_options.cegis_jump then begin
-			cegis ~jump_to_prev_iter:jump_to_opt problem (mismatched :: spec) additional_constraints
-		end
+		(* cex from pbe spec *)
+		let augmented_mismatched = SynthBase.AugSpec.aug_ex_io mismatched in
+		Logger.g_info_f "add counter example: %s" (Specification.string_of_ex_io mismatched); 
+		if BatOption.default true Global.t.cli_options.cegis_jump then
+			cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) additional_constraints
 		else
-			cegis problem (mismatched :: spec) additional_constraints
+			cegis (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) additional_constraints
 	| None ->
-		match Specification.verify additional_constraints proposed_sol spec with
-		| None -> begin
-			Global.t.summary.final_io_pairs <- List.length spec;
-			proposed_sol
-		end
-		| Some (cex, next_constraints) ->
-			Logger.g_info_f "add counter example: %s" (Specification.string_of_io_spec [cex]); 
-			let _ = assert (not (List.mem cex spec)) in
+		match Specification.verify additional_constraints proposed_sol spec.sem_spec.original_spec with
+		| Some (CexIO cex, next_constraints) -> begin
+			(* cex(input-output pair) from constraint verifier(solver) *)
+			let aug_cex = SynthBase.AugSpec.aug_ex_io cex in
+			Logger.g_info_f "add counter example: %s" (Specification.string_of_ex_io cex); 
+			let _ = assert (not (List.mem aug_cex (spec.sem_spec.spec_cex))) in
 			if BatOption.default true Global.t.cli_options.cegis_jump then begin
-				cegis ~jump_to_prev_iter:jump_to_opt problem (cex :: spec) next_constraints
+				cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec aug_cex spec) next_constraints
 			end
 			else
-				cegis problem (cex :: spec) next_constraints
+				cegis (SynthBase.AugSpec.add_cex_spec aug_cex spec) next_constraints
+		end
+		| None -> begin
+			(* no more constraint -> found final solution *)
+			Global.t.summary.final_io_pairs <- List.length (spec.sem_spec.spec_cex);
+			proposed_sol
+		end
 
 let report_result () =
 	(* detail in json *)
@@ -150,24 +156,33 @@ let main () =
 		SpecDiversity.verification_constraints_from_names Global.t.cli_options.diversity_names
 	in
 	let problem = Parse.parse Global.t.input_path in
-
+	let problem =
+		(* cli optionex_cut: modify given problem *)
+		match Global.t.cli_options.ex_cut with
+		| None -> problem
+		| Some n ->
+			{problem with spec_total =
+				{problem.spec_total with spec_pbe =
+					BatList.take n problem.spec_total.spec_pbe
+				}
+			}
+	in
+	let spec =
+		try
+			SynthBase.AugSpec.problem_to_spec problem
+		with SynthBase.AugSpec.SolutionFoundTrivial sol -> begin
+			Logger.g_info_f "Trivial solution found: %s" (Exprs.string_of_expr sol);
+			Global.t.end_time <- Unix.gettimeofday();
+			report_result();
+			Logger.g_close();
+			exit 0
+		end
+	in
 	(* CEGIS loop *)
-	let _ = assert ((List.length problem.io_spec_total) > 0) in 
+	let _ = assert (List.length spec.sem_spec.spec_cex > 0) in 
 	let _ =
 		try
-			let starting_spec =
-				if BatOption.default (not (Specification.is_pbe_only())) Global.t.cli_options.ex_all then
-					problem.io_spec_total
-				else
-					(* get first one *)
-					[BatList.hd problem.io_spec_total]
-			in
-			let sol = cegis
-				{problem with
-					io_spec_total = match Global.t.cli_options.ex_cut with
-						| None -> problem.io_spec_total
-						| Some n -> BatList.take n problem.io_spec_total}
-				starting_spec diversity_constraints in
+			let sol = cegis spec diversity_constraints in
 			Global.t.summary.found_solution_and_size <- Some (
 				Exprs.sexpstr_of_fun problem.args_map (Operators.op_to_string problem.target_function_name) sol,
 				Exprs.size_of_expr sol

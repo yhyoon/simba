@@ -1,3 +1,6 @@
+(**
+	*	Representation of SyGuS Problem - Semantic Part
+  *)
 open Sexplib
 open Z3
 
@@ -7,70 +10,70 @@ open SynthLang.Exprs
 open SexpUtil
 
 exception UnknownModel
-exception SolutionFound of expr 
 
-(* oracle expr with a given function name and quantified variables  *)
-let oracle_expr = ref (Const (CInt 0))
-(* oracle expr only with sygus builtins and parameter variables  *)
-let oracle_expr_resolved = ref (Const (CInt 0))
+(** PBE Part *)
+type ex_input = const list
+type ex_output = const
+type ex_io = ex_input * ex_output
 
-type one_iospec = const list * const_opt
-type iospec = one_iospec list
+type t = {
+	spec_pbe: ex_io list;
 
-(* spec for programming-by-example *)
-type t = iospec
+	(** oracle condition*)
+	spec_oracle_expr: expr option; (* oracle expr with a given function name and quantified variables  *)
+	spec_oracle_expr_resolved: expr option; (* oracle expr only with sygus builtins and parameter variables  *)
 
-let is_pbe_only(): bool = Stdlib.compare !oracle_expr (Const (CInt 0)) = 0
+	(* maybe extended... to logic formula and more *)
+}
 
-let empty_spec = []
+let is_pbe_only (t: t): bool = BatOption.is_none t.spec_oracle_expr
 
-let is_full_spec (iospec: iospec) =
-	iospec |>
-	BatList.map snd |>
-	BatList.for_all (function CDefined _ -> true | _ -> false)
+let empty_spec: t = {
+	spec_pbe = [];
+	spec_oracle_expr = None;
+	spec_oracle_expr_resolved = None;
+}
 
-let to_verfiable_spec (iospec: iospec): (const list * const) list =
-	BatList.filter_map (function
-			| (input_spec, CDefined output_spec) ->
-				Some (input_spec, output_spec)
-			| _ -> None
-		) iospec
+let string_of_ex_io ex_io =
+	let (ex_input, ex_output) = ex_io in
+	Printf.sprintf "i:%s -> o:%s"
+		(string_of_list string_of_const ex_input) 
+		(string_of_const ex_output) 
 
-let add_io_spec (inputs, output) spec = 
-	if (List.mem (inputs, output) spec) then spec 
+let add_ex_io (ex_input, ex_output) spec = 
+	if (List.mem (ex_input, ex_output) spec.spec_pbe) then spec
 	else 
-		spec @ [(inputs, output)]
-	(* ((inputs, output) :: spec)  *)
+		{spec with spec_pbe = spec.spec_pbe @ [(ex_input, ex_output)]}
 
-let string_of_io_spec spec = 
-	string_of_list (fun (inputs, output) ->
+let string_of_ex_io_list ex_io_list = 
+	string_of_list (fun (ex_input, ex_output) ->
 		Printf.sprintf "i:%s -> o:%s"
-		(string_of_list string_of_const inputs) 
-		(string_of_const_opt output) 
-	) spec 
+		(string_of_list string_of_const ex_input) 
+		(string_of_const ex_output) 
+	) ex_io_list
 
-let signature_of_spec spec =
-	if is_full_spec spec then
-		spec |>
-		to_verfiable_spec |>
-		BatList.map snd |>
-		signature_of_const_list
-	else
-		invalid_arg "partial spec cannot be signature"
+let add_oracle_spec oracle_expr oracle_expr_resolved spec =
+	match spec.spec_oracle_expr, spec.spec_oracle_expr_resolved with
+	| None, None -> {
+		spec with
+	    spec_oracle_expr = Some oracle_expr;
+			spec_oracle_expr_resolved = Some oracle_expr_resolved;
+		}
+	| _ -> raise (Invalid_argument "add_oracle_spec: multiple oracle exprs")
 
-let signature_of_output_spec output_specs =
-	output_specs |>
-	BatList.map (function Some c -> c | _ -> invalid_arg "partial spec cannot be signature") |>
-	signature_of_const_list
+type counter_example =
+  | CexIO of ex_io
+	(* maybe extended input and logical formula... etc. *)
 
 (* Using Z3 OCaml API *)
-let rec verify (additional_constraints: SpecDiversity.verification_constraints) (sol: expr) (spec: iospec): (one_iospec * SpecDiversity.verification_constraints) option =
+let rec verify (additional_constraints: SpecDiversity.verification_constraints) (sol: expr) (spec: t): (counter_example * SpecDiversity.verification_constraints) option =
 	let start = Sys.time () in 
 	(* no oracle - pbe *)
-	if is_pbe_only() then None
+	if is_pbe_only spec then None
 	else
-		let params = get_params !oracle_expr_resolved in
-		let output_expr_str = string_of_expr !oracle_expr_resolved in
+		let oracle_expr_resolved = BatOption.get spec.spec_oracle_expr_resolved in
+		let params = get_params oracle_expr_resolved in
+		let output_expr_str = string_of_expr oracle_expr_resolved in
 		let params_str_list_rev =
 			BatSet.fold (fun param acc_rev ->
 				let decl_str = Printf.sprintf "(declare-const %s %s)"
@@ -82,7 +85,7 @@ let rec verify (additional_constraints: SpecDiversity.verification_constraints) 
   		in
 		let params_str = string_of_list ~first:"" ~last:"" ~sep:"\n" identity (BatList.rev params_str_list_rev) in
 		let (diversity_constraint_name_and_str_opt, additional_constraint_str, next_additional_constraints) =
-			SpecDiversity.process_verification_constraints additional_constraints (to_verfiable_spec spec) params output_expr_str
+			SpecDiversity.process_verification_constraints additional_constraints spec.spec_pbe params output_expr_str
 		in
 		let diversity_constraint_str_opt =
 			match diversity_constraint_name_and_str_opt with
@@ -164,46 +167,23 @@ let rec verify (additional_constraints: SpecDiversity.verification_constraints) 
 					try
 						Some (
 							(* CInt 0 = placeholder *)
-							compute_signature [(cex_input, CInt 0)] sol |> sig_hd
+							compute_signature [cex_input] sol |> sig_hd
 							)
 					with UndefinedSemantics -> None
 				in
 				try
-  					let cex_output = compute_signature [(cex_input, CInt 0)] !oracle_expr_resolved |> sig_hd in
+  				let cex_output = compute_signature [cex_input] (BatOption.get spec.spec_oracle_expr_resolved) |> sig_hd in
 					Logger.g_debug_f "sol:%s" (BatOption.map_default string_of_const "N/A" sol_output_opt);
 					Logger.g_debug_f "oracle:%s" (string_of_const cex_output);
-					Logger.g_debug_f "cex : %s" (string_of_io_spec [(cex_input, CDefined cex_output)]);
+					Logger.g_debug_f "cex : %s" (string_of_ex_io (cex_input, cex_output));
 					BatOption.may (fun so ->
 						if (Stdlib.compare so cex_output) = 0 then
 							failwith (Printf.sprintf "solution = oracle: %s = %s" (string_of_const so) (string_of_const cex_output))
 						else ()
 						) sol_output_opt;
-					Some ((cex_input, CDefined cex_output), next_additional_constraints)
+					Some (CexIO (cex_input, cex_output), next_additional_constraints)
 				with UndefinedSemantics -> begin
 					Logger.g_error_f "Z3 returned invalid cex, add to forbidden list and retry: %s" (string_of_list string_of_const cex_input);
 					verify {next_additional_constraints with forbidden_inputs = cex_input :: additional_constraints.forbidden_inputs} sol spec
 				end
 		end
-
-let add_trivial_examples (grammar: SynthLang.Grammar.grammar) (spec: t): t =
-	let _ = assert (is_function_expr !oracle_expr) in
-	let _ = assert (is_function_expr !oracle_expr_resolved) in 
-	let trivial_sol = 
-		Const (get_trivial_value (SynthLang.Grammar.type_of_nt SynthLang.Grammar.start_nt))
-		(* List.find (fun (nt, r) ->                                                 *)
-		(* 	(SynthLang.Grammar.NTNode.equal SynthLang.Grammar.start_nt nt) && (SynthLang.Grammar.is_param_rule r) *)
-		(* ) (SynthLang.Grammar.get_nt_rule_list grammar) |> snd |> SynthLang.Grammar.expr_of_rewrite    *)
-	in
-	match verify SpecDiversity.empty_verification_constraints trivial_sol spec with 
-	| None -> raise (SolutionFound trivial_sol)  
-	| Some (cex, _) -> 
-		let _ = assert (not (List.mem cex spec)) in  
-		(cex :: spec)
-	(* let inputs =                                                                     *)
-	(* 	let children = get_children !oracle_expr in                                    *)
-	(* 	List.map (fun e -> get_trivial_value (type_of_expr e)) children    *)
-	(* in                                                                               *)
-	(* let output =                                                                     *)
-	(* 	compute_signature [(inputs, CInt 0)] !oracle_expr_resolved               *)
-	(* in                                                                               *)
-	(* ((inputs, List.hd output) :: spec) *)

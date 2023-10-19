@@ -64,7 +64,7 @@ type component_pool = {
     nt_to_expr_size_ordered: (Grammar.non_terminal, sized_expr_set) BatMap.t;
 }
 
-let create_empty (grammar: Grammar.grammar) (spec: (Exprs.const list * Exprs.const_opt) list): component_pool =
+let create_empty (grammar: Grammar.grammar) (spec: (Exprs.const list * AugSpec.output_spec) list): component_pool =
     let nts: Grammar.non_terminal BatSet.t = bm_key_set grammar in
     let predicate_nts =
         BatMap.foldi (fun nt rules s ->

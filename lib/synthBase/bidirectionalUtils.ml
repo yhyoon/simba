@@ -51,7 +51,7 @@ let try_revert_to_nt_at (grammar: grammar) (to_nt_addr: addr) (addr: addr) (rewr
 	in
 	try_revert_rewrite_to_nt_at addr rewrite
 
-let is_feasible_by_solver (grammar: Grammar.grammar) (spec: SynthSpec.Specification.t) (rewrite: Grammar.rewrite): bool =
+let is_feasible_by_solver (grammar: Grammar.grammar) (spec: AugSpec.io_spec list) (rewrite: Grammar.rewrite): bool =
 	let smt_string_of_addr (addr: GrammarUtil.addr): string =
 		let position_prefix: string = "__p" in
 		List.fold_left (^) position_prefix (List.map string_of_int addr)
@@ -157,9 +157,9 @@ let is_feasible_by_solver (grammar: Grammar.grammar) (spec: SynthSpec.Specificat
 				(** Input-output constraint *)
 				let io_constrs: string list =
 					let out_constr_str = 
-					Printf.sprintf "(assert (= %s %s))" 
-						(smt_string_of_addr [])
-						(Exprs.string_of_const output_const)
+						Printf.sprintf "(assert (= %s %s))" 
+							(smt_string_of_addr [])
+							(Exprs.string_of_const output_const)
 					in
 					let in_constr_strs =
 					List.map (fun (param, input_const) ->
@@ -177,13 +177,13 @@ let is_feasible_by_solver (grammar: Grammar.grammar) (spec: SynthSpec.Specificat
 					var_decls_str ^ "\n" ^
 					(string_of_list ~first:"" ~last:"" ~sep:"\n" identity constrs)
 				in
-				let (q, solver) = SynthSpec.Z3interface.smt_check smt_str in
+				let (q, solver) = SynthProblem.Z3interface.smt_check smt_str in
 				match q with
 				| UNSATISFIABLE ->
 					true
 				| _ ->
 					false
-			) (SynthSpec.Specification.to_verfiable_spec spec)
+			) (AugSpec.de_aug_spec spec)
 		in
 		(* found unsat i/o pair -> infeasible *)
 		false

@@ -1,5 +1,5 @@
 (library
- (name synthSpec)
+ (name synthProblem)
  (modules :standard)
  (libraries common synthLang unix z3 core_kernel)
 )
