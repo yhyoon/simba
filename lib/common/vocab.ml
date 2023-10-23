@@ -162,6 +162,16 @@ let option_or (x: 'a option) (y: 'a option): 'a option =
     | None, Some y' -> Some y'
     | _, _ -> None
 
+let (|??) (x: 'a option) (y: unit -> 'a option): 'a option =
+    match x with
+    | Some x' -> Some x'
+    | None -> y ()
+
+let (|?!) (x: 'a option) (y: unit -> 'a): 'a =
+    match x with
+    | Some x' -> x'
+    | None -> y ()
+
 let common_prefix ?(is_equal:'a -> 'a -> bool = fun x y -> x = y) (l1: 'a list) (l2: 'a list): 'a list =
     let rec aux l1 l2 acc =
         match l1, l2 with

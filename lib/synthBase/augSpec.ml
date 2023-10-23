@@ -133,6 +133,8 @@ type t = {
 
 and syn_spec = {
     grammar: Grammar.grammar;                                               (* given grammar *)
+    target_function_id: Operators.op;                                       (* target function id *)
+    args_list: (string * Exprs.expr) list;                                  (* argument list *)
     nt_rule_list: (Grammar.non_terminal * Grammar.rewrite) list;            (* easy access to grammar rules *)
     nt_rule_list_wo_ite: (Grammar.non_terminal * Grammar.rewrite) list;     (* preprocessed rules - remove branch expression *)
 }
@@ -141,15 +143,6 @@ and sem_spec = {
     original_spec: Specification.t;                     (* specification from given problem *)
     spec_cex: (ex_input * output_spec) list;            (* whole counter examples *)
 }
-
-let augment_grammar (grammar: Grammar.grammar): syn_spec =
-	let nt_rule_list = Grammar.get_nt_rule_list grammar in
-	let nt_rule_list_wo_ite = BatList.filter (fun (nt, rule) -> not (Grammar.is_ite_function_rule rule)) nt_rule_list in
-	{
-		grammar=grammar;
-		nt_rule_list=nt_rule_list;
-		nt_rule_list_wo_ite=nt_rule_list_wo_ite;
-	}
 
 let add_cex_spec (inputs, output_spec) spec =
     if (List.mem (inputs, output_spec) spec.sem_spec.spec_cex) then
@@ -161,39 +154,56 @@ let add_cex_spec (inputs, output_spec) spec =
             };
         }
 
-let get_trivial_examples (grammar: SynthLang.Grammar.grammar) (spec: Specification.t): io_spec list =
-    let _ = assert (Exprs.is_function_expr (BatOption.get spec.spec_oracle_expr)) in
-    let _ = assert (Exprs.is_function_expr (BatOption.get spec.spec_oracle_expr_resolved)) in 
-    let trivial_sol = 
+(* ex_input 을 대입했을 때 pred 가 true 가 된다는 사실로부터 output spec 을 생성한다 *)
+let alpha_predicate_constraint (ex_input: ex_input) (pred: Exprs.expr) (spec: t): io_spec =
+    failwith "Not Implemented"
+
+let add_trivial_example (spec: t): t =
+    let trivial_sol =
         Exprs.Const (Exprs.get_trivial_value (SynthLang.Grammar.type_of_nt SynthLang.Grammar.start_nt))
     in
-    match Specification.verify SpecDiversity.empty_verification_constraints trivial_sol spec with 
-    | None -> raise (SolutionFoundTrivial trivial_sol)  
+    match Specification.verify [] false spec.syn_spec.target_function_id spec.syn_spec.args_list trivial_sol spec.sem_spec.original_spec with 
+    | None ->
+        raise (SolutionFoundTrivial trivial_sol)  
     | Some (CexIO cex, _) ->
-        let _ = assert (not (List.mem cex spec.spec_pbe)) in  
-        [aug_ex_io cex]
+        let _ = assert (not (List.mem cex spec.sem_spec.original_spec.spec_pbe)) in  
+        add_cex_spec (aug_ex_io cex) spec
+    | Some (CexPred (ex_input, pred), _) ->
+        add_cex_spec (alpha_predicate_constraint ex_input pred spec) spec
 
-let augment_contraints (grammar: SynthLang.Grammar.grammar) (spec: Specification.t): sem_spec =
+let augment_contraints (spec: Specification.t): sem_spec =
     let io_spec_list =
         if BatList.is_empty spec.spec_pbe then
-            get_trivial_examples grammar spec
+            []
         else
-            if BatOption.default (not (Specification.is_pbe_only spec)) Global.t.cli_options.ex_all then
+            if BatOption.default (Specification.need_solver_check spec) Global.t.cli_options.ex_all then
                 BatList.map aug_ex_io spec.spec_pbe
             else
                 (* get first one *)
                 [aug_ex_io (BatList.hd spec.spec_pbe)]
     in
-    let augmented_spec = io_spec_list in
     {
         original_spec=spec;
         spec_cex=io_spec_list;
     }
 
 let problem_to_spec (problem: Parse.parse_result): t =
-    let sem_spec = augment_contraints problem.grammar problem.spec_total in
-    let syn_spec = augment_grammar problem.grammar in
-    {
-        syn_spec=syn_spec;
-        sem_spec=sem_spec;
+    let nt_rule_list = Grammar.get_nt_rule_list problem.grammar in
+	let nt_rule_list_wo_ite = BatList.filter (fun (nt, rule) -> not (Grammar.is_ite_function_rule rule)) nt_rule_list in
+    let syn_spec = {
+        grammar=problem.grammar;
+        target_function_id=problem.target_function_id;
+        args_list=problem.args_list;
+        nt_rule_list=nt_rule_list;
+        nt_rule_list_wo_ite=nt_rule_list_wo_ite;
     }
+    in
+    let spec = {
+        syn_spec=syn_spec;
+        sem_spec= augment_contraints problem.spec_total;
+    }
+    in
+    if not (BatList.is_empty spec.sem_spec.spec_cex) then
+        spec
+    else
+        add_trivial_example spec

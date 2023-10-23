@@ -56,7 +56,7 @@ end
 let rec cegis
 	?(jump_to_prev_iter: (int * int) option = None)
 	(spec: SynthBase.AugSpec.t)
-	(additional_constraints: SpecDiversity.verification_constraints)
+	(forbidden_inputs: Exprs.const list list)
 : Exprs.expr =
 	Global.begin_new_cegis_iter Global.t;
 	Global.t.summary.final_io_pairs <- List.length spec.sem_spec.spec_cex;
@@ -93,21 +93,26 @@ let rec cegis
 		let augmented_mismatched = SynthBase.AugSpec.aug_ex_io mismatched in
 		Logger.g_info_f "add counter example: %s" (Specification.string_of_ex_io mismatched); 
 		if BatOption.default true Global.t.cli_options.cegis_jump then
-			cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) additional_constraints
+			cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) forbidden_inputs
 		else
-			cegis (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) additional_constraints
+			cegis (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) forbidden_inputs
 	| None ->
-		match Specification.verify additional_constraints proposed_sol spec.sem_spec.original_spec with
-		| Some (CexIO cex, next_constraints) -> begin
+		match Specification.verify forbidden_inputs false spec.syn_spec.target_function_id spec.syn_spec.args_list proposed_sol spec.sem_spec.original_spec with
+		| Some (cex, forbidden_inputs) -> begin
+			let aug_cex = match cex with
+				| CexIO ex_io ->
+					SynthBase.AugSpec.aug_ex_io ex_io
+				| CexPred (ex_input, pred) ->
+					SynthBase.AugSpec.alpha_predicate_constraint ex_input pred spec
+		  in
 			(* cex(input-output pair) from constraint verifier(solver) *)
-			let aug_cex = SynthBase.AugSpec.aug_ex_io cex in
-			Logger.g_info_f "add counter example: %s" (Specification.string_of_ex_io cex); 
+			Logger.g_info_f "add counter example: %s" (SynthBase.AugSpec.string_of_io_spec aug_cex); 
 			let _ = assert (not (List.mem aug_cex (spec.sem_spec.spec_cex))) in
 			if BatOption.default true Global.t.cli_options.cegis_jump then begin
-				cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec aug_cex spec) next_constraints
+				cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec aug_cex spec) forbidden_inputs
 			end
 			else
-				cegis (SynthBase.AugSpec.add_cex_spec aug_cex spec) next_constraints
+				cegis (SynthBase.AugSpec.add_cex_spec aug_cex spec) forbidden_inputs
 		end
 		| None -> begin
 			(* no more constraint -> found final solution *)
@@ -152,9 +157,6 @@ let report_result () =
 let main () =
 	process_cli_options();
 	ready_global_variables();
-	let diversity_constraints =
-		SpecDiversity.verification_constraints_from_names Global.t.cli_options.diversity_names
-	in
 	let problem = Parse.parse Global.t.input_path in
 	let problem =
 		(* cli optionex_cut: modify given problem *)
@@ -182,9 +184,9 @@ let main () =
 	let _ = assert (List.length spec.sem_spec.spec_cex > 0) in 
 	let _ =
 		try
-			let sol = cegis spec diversity_constraints in
+			let sol = cegis spec [] in
 			Global.t.summary.found_solution_and_size <- Some (
-				Exprs.sexpstr_of_fun problem.args_map (Operators.op_to_string problem.target_function_name) sol,
+				Exprs.sexpstr_of_fun problem.args_map (Operators.op_to_string problem.target_function_id) sol,
 				Exprs.size_of_expr sol
 			)
 		with Bidirectional.NoSol msg -> begin

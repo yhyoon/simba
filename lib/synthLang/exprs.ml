@@ -282,16 +282,29 @@ let get_bool (const: const): bool =
 	| CBool b -> b
 	| _ -> assert false
 
-let rec change_param_to_var (param2var: (expr, expr) BatMap.t) (expr: expr): expr =
+let rec change_param_to_expr (param2expr: (expr, expr) BatMap.t) (expr: expr): expr =
 	match expr with
 	| Param _ -> begin
 		try
-			BatMap.find expr param2var
+			BatMap.find expr param2expr
 		with _ ->
 			assert false
 	end
 	| Function (op, exprs, ty) ->
-		Function (op, List.map (change_param_to_var param2var) exprs, ty)
+		Function (op, List.map (change_param_to_expr param2expr) exprs, ty)
+	| _ ->
+		expr
+
+let rec change_var_to_expr (var2expr: (expr, expr) BatMap.t) (expr: expr): expr =
+	match expr with
+	| Var _ -> begin
+		try
+			BatMap.find expr var2expr
+		with _ ->
+			assert false
+	end
+	| Function (op, exprs, ty) ->
+		Function (op, List.map (change_var_to_expr var2expr) exprs, ty)
 	| _ ->
 		expr
 
@@ -303,7 +316,7 @@ let sexpstr_of_fun (args_map: (string, expr) BatMap.t) (name: string) (expr: exp
 			BatMap.add param_expr (Var(id, ty)) acc
 		) args_map BatMap.empty
 	in
-	let expr = change_param_to_var param2var expr in
+	let expr = change_param_to_expr param2var expr in
 	let params =
 		BatMap.foldi (fun id param_expr acc -> (id, param_expr) :: acc) args_map []
 		|> List.sort (fun (_, param_expr1) (_, param_expr2) -> (get_param_id param_expr1) - (get_param_id param_expr2))
@@ -320,6 +333,19 @@ let sexpstr_of_fun (args_map: (string, expr) BatMap.t) (name: string) (expr: exp
 		params_str
 		ret_type_str
 		(string_of_expr expr)
+
+let inline_function (expr: expr) (fun_id: Operators.op) (params: expr list) (fun_body: expr): expr =
+	let rec inline_sub (expr: expr): expr =
+		match expr with
+		| Function (op, operands, optype) ->
+			if op = fun_id && BatList.length operands = BatList.length params then
+				let subst_map = BatList.combine params operands |> BatList.to_seq |> BatMap.of_seq in
+				change_param_to_expr subst_map fun_body
+			else
+				Function (op, BatList.map inline_sub operands, optype)
+		| _ -> expr
+	in
+	inline_sub expr
 
 (** helpers for extracting ocaml values from signatures *)
 let extract_str_int (values: signature list): (string list * int list) =
