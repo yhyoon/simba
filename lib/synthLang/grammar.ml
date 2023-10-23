@@ -132,6 +132,8 @@ and ret_type_of_func_rewrite (op: op) (operands: rewrite list): exprtype =
 		Bool
 	| GEN_CMP_OP _ ->
 		Bool
+	| INT_OP _ ->
+		Int
 	| GENERAL_FUNC op_str ->
 		if is_str_op op then
 			String

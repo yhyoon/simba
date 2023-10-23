@@ -437,22 +437,6 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 				) str1s num1s num2s
 			)
 		end
-		(** LIA theory **)
-		| "+" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (+) num1s num2s)
-		| "-" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (-) num1s num2s)
-		| "*" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 ( * ) num1s num2s)
-		| "/" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (/) num1s num2s)
-		| "%" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (mod) num1s num2s)
 		| _ -> failwith ("not supported operator: " ^ (op_to_string op))
 	end
 	| TRI_OP ITE -> begin
@@ -608,6 +592,24 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 				failwith (Printf.sprintf "bv length mismatch: %s bv%d bv%d" (Operators.op_to_string op) len1 len2)
 		| _ -> failwith "bitvec comparison operator needs exactly 2 bitvec operands"
 	end (* end of BV_OP *)
+	(** LIA theory **)
+	| INT_OP I_ADD ->
+		let (num1s, num2s) = extract_int_int values in
+		SigInt (List.map2 (+) num1s num2s)
+	| INT_OP I_SUB ->
+		let (num1s, num2s) = extract_int_int values in
+		SigInt (List.map2 (-) num1s num2s)
+	| INT_OP I_MUL ->
+		let (num1s, num2s) = extract_int_int values in
+		SigInt (List.map2 ( * ) num1s num2s)
+	| INT_OP I_DIV ->
+		let (num1s, num2s) = extract_int_int values in
+		SigInt (List.map2 (/) num1s num2s)
+	| INT_OP I_MOD ->
+		let (num1s, num2s) = extract_int_int values in
+		SigInt (List.map2 (mod) num1s num2s)
+	(** end of LIA theory **)
+	| _ -> failwith ("not supported operator: " ^ (op_to_string op))
 
 (* param_valuation: (int, const list) BatMap.t *)
 (* ret type: const list *)
