@@ -77,10 +77,10 @@ let rec cegis
 	(* spec' = spec + first mismatched input-output examples *)
 	let mismatched_opt =
 		BatList.find_opt (function
-				| (inputs_from_problem, desired_output_from_problem) -> begin
+				| (inputs, desired_output) -> begin
 					try
-						let proposed_signature = Exprs.compute_signature [inputs_from_problem] proposed_sol in
-						Exprs.compare_signature proposed_signature (Exprs.sig_of_single_const desired_output_from_problem) <> 0
+						let proposed_signature = Exprs.compute_signature [inputs] proposed_sol in
+						Exprs.compare_signature proposed_signature (Exprs.sig_of_single_const desired_output) <> 0
 					with Exprs.UndefinedSemantics ->
 						true
 					end

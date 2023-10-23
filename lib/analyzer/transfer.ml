@@ -130,42 +130,6 @@ type feasibility =
     | NeedMoreAnalysis of AbstState.t
     | DesiredExpr of expr
 
-let alpha_output_spec (output_specs: SynthBase.AugSpec.output_spec list): AbstSig.t =
-    match output_specs with
-    | [] -> failwith "empty signature"
-    | CConcrete Exprs.CBV (len, _) :: _ | CDontCare BV len :: _ -> begin
-        match len with
-        | 64 ->
-            BitVec64 (BatList.map (fun c -> match c with
-                    | SynthBase.AugSpec.CConcrete (Exprs.CBV (_, i)) -> RedProd64.from_int64 i
-                    | SynthBase.AugSpec.CDontCare _ -> RedProd64.top_repr
-                    | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (SynthBase.AugSpec.string_of_output_spec c)
-                ) output_specs)
-        | 32 ->
-            BitVec32 (BatList.map (fun c -> match c with
-                    | SynthBase.AugSpec.CConcrete (Exprs.CBV (_, i)) -> RedProd32.from_int64 i
-                    | SynthBase.AugSpec.CDontCare _ -> RedProd32.top_repr
-                    | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (SynthBase.AugSpec.string_of_output_spec c)
-                ) output_specs)
-        | _ ->
-            let module I = Int64Util.MaskedInt64(struct let size = len end) in
-            let module P = RedProd.Make(I) in
-            BitVecGeneral (len, BatList.map (fun c -> match c with
-                    | SynthBase.AugSpec.CConcrete (Exprs.CBV (_, i)) -> P.from_int64 i
-                    | SynthBase.AugSpec.CDontCare _ -> P.top_repr
-                    | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (SynthBase.AugSpec.string_of_output_spec c)
-                ) output_specs)
-    end
-    | CConcrete CBool _ :: _ | CDontCare Exprs.Bool :: _ ->
-        Bool (Dom.ABoolSig.of_list (BatList.map (fun c -> match c with
-                | SynthBase.AugSpec.CConcrete (Exprs.CBool b) -> Elem.from_bool false b
-                | SynthBase.AugSpec.CDontCare _ -> Elem.B_Top
-                | _ -> failwith_f "signature_of_const_list(%s in CBool list): kind mismatch" (SynthBase.AugSpec.string_of_output_spec c)
-            ) output_specs))
-    | _ -> Bot
-
-
-
 let check_feasibility
     (candidate: rewrite)
     (plugged_spot: addr)
@@ -175,7 +139,7 @@ let check_feasibility
     (* assume candidate is not ExprRewrite *)
     let hole_size = count_holes candidate in
     let input_spec, output_spec = BatList.split spec in
-    let abst_output_spec = alpha_output_spec output_spec in
+    let abst_output_spec = SynthBase.AugSpec.alpha_output_spec output_spec in
     let feasibility = Logger.g_with_increased_depth (fun () ->
         try
             let (last_updated, forward_result) =

@@ -36,6 +36,10 @@ type synth_ctx_learn_ite = {
 	then_nt: Grammar.non_terminal;
 	else_nt: Grammar.non_terminal;
 	less_spec: AugSpec.io_spec list;
+	(** nt * index * const |-> ((index * const) list * expr) option
+	  * Some (COVERING, EXPR): for nt, index, const -> we found EXPR which covers COVERING
+		* None: for nt, index, const -> there is no sub-problem solution for that partial sig
+			*)
 	nt_subproblem_cache: (Grammar.non_terminal * int * Exprs.const, ((int * Exprs.const) list * Exprs.expr) option) BatMap.t;
 }
 
@@ -49,6 +53,7 @@ let raise_solution_found (ctx_main:synth_ctx_main) (sol: Exprs.expr) =
 		let s = Components.get_num_total_components ctx_main.components in
 		Global.set_component_pool_size_when_sol s Global.t;
 		Global.t.summary.final_compo_pool_count <- s;
+		Global.t.summary.final_max_compo_size <- Components.max_size ctx_main.components;
 	end;
 	raise (SolutionFoundInComposer (sol, BatList.length ctx_main.used_sketch_rev, Components.max_size ctx_main.components))
 
@@ -59,6 +64,7 @@ let add_nt_subproblem_sol (ctx_learn_ite: synth_ctx_learn_ite) (nt: Grammar.non_
 					(** not sure, ignore *)
 					binding
 			| _, Some sol ->
+				  (** new one is definitely better, update *)
 					Some (Some (less_spec, sol))
 			| Some _, None ->
 					(** existing is better, ignore *)
@@ -76,7 +82,7 @@ exception NoSolSubProblem of string * int * Exprs.const
 
 (**
  None: dont' know
- Some None: we know no solution
+ Some None: we know no solution with current component pool
  Some Some s: we know a solution s
  *)
 let search_nt_subproblem_cache (ctx_learn_ite: synth_ctx_learn_ite) (nt: Grammar.non_terminal) (less_spec: (int * Exprs.const) list): ((int * Exprs.const) list * Exprs.expr) option option =
@@ -94,13 +100,6 @@ let search_nt_subproblem_cache (ctx_learn_ite: synth_ctx_learn_ite) (nt: Grammar
 			| _ -> None
 	in
 	aux less_spec
-
-let is_solution (spec: AugSpec.io_spec list) expr =
-	try
-		let abst_desired_sig = Analyzer.Transfer.alpha_output_spec (BatList.map snd spec) in
-		let abst_signature = Dom.AbstDom.AbstSig.alpha (Exprs.compute_signature (BatList.map fst spec) expr) in
-		Dom.AbstDom.AbstSig.leq abst_signature abst_desired_sig
-	with Exprs.UndefinedSemantics -> false
 
 let compose_progress_logger: Logger.periodic_reporter option ref = ref None
 let compose_progress_log (s_lazy: unit -> string) =
@@ -178,21 +177,12 @@ let check_feasibility_general
 	: Analyzer.Transfer.feasibility =
 	match candidate with
 	| Grammar.ExprRewrite expr -> begin (* compute exact value *)
-		try
-			let abst_desired_sig = Analyzer.Transfer.alpha_output_spec (BatList.map snd spec) in
-			let abst_signature = Dom.AbstDom.AbstSig.alpha (Exprs.compute_signature (BatList.map fst spec) expr) in
-			if Dom.AbstDom.AbstSig.leq abst_signature abst_desired_sig then begin
-				Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "solution found in checking feasiblity: %s" (SynthLang.Exprs.string_of_expr expr));
-				Analyzer.Transfer.DesiredExpr expr
-			end
-			else begin
-				(* Logger.g_debug_lazy (fun () -> Printf.sprintf "thrown by exact calculation: %s" (SynthLang.Exprs.string_of_expr expr)); *)
-				Analyzer.Transfer.NotDesiredExpr
-			end
-		with Exprs.UndefinedSemantics -> begin
-			Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "thrown by undefined semantics: %s" (SynthLang.Exprs.string_of_expr expr));
-			Analyzer.Transfer.NotDesiredExpr
+	  if AugSpec.is_solution_expr spec expr then begin
+			Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "solution found in checking feasiblity: %s" (SynthLang.Exprs.string_of_expr expr));
+			Analyzer.Transfer.DesiredExpr expr
 		end
+		else
+			Analyzer.Transfer.NotDesiredExpr
 	end
 	| _ -> begin
 		let check_start_time = Unix.gettimeofday() in
@@ -227,6 +217,7 @@ let check_feasibility_general
 		end;
 		result
 	end
+
 type prune_info =
 	| PRUNE_NO
 	| PRUNE_CONCRETE_SEARCH of int * int
@@ -325,7 +316,7 @@ let topdown_sketches_depth1
 =
 	let (root_rule, root_sem) =
 		(Grammar.NTRewrite start_symbol,
-			Analyzer.AbstState.update_value [] (Analyzer.Transfer.alpha_output_spec (BatList.map snd spec)) Analyzer.AbstState.empty)
+			Analyzer.AbstState.update_value [] (AugSpec.alpha_output_spec (BatList.map snd spec)) Analyzer.AbstState.empty)
 	in
 	topdown_expand grammar spec (root_rule, root_sem) [] |> BatList.rev
 
@@ -382,7 +373,7 @@ let topdown_sketches_hole_count
 =
 	let (root_rule, root_sem) =
 		(Grammar.NTRewrite start_symbol,
-			Analyzer.AbstState.update_value [] (Analyzer.Transfer.alpha_output_spec (BatList.map snd spec)) Analyzer.AbstState.empty)
+			Analyzer.AbstState.update_value [] (AugSpec.alpha_output_spec (BatList.map snd spec)) Analyzer.AbstState.empty)
 	in
 	let rec aux gen =
 		match BatList.find_opt (fun (skel, _) -> GrammarUtil.count_holes skel >= dest_hole_count) gen with
@@ -457,25 +448,21 @@ let log_component_sizes (grammar: Grammar.grammar) (components: component_pool):
 let make_partial_output_sig (pts: int list) (spec: AugSpec.io_spec list): (int * Exprs.const) list =
 	list_sub_sparse (zip_with_index (BatList.map snd spec)) pts
 		|> BatList.filter_map (function
-			| (idx, AugSpec.CConcrete c) -> Some (idx, c)
-			| (_, AugSpec.CDontCare _) -> None
-			| (_, AugSpec.CAbstract _) -> None)
+			| (idx, AugSpec.OConcrete c) -> Some (idx, c)
+			| (_, AugSpec.ODontCare _) -> None
+			| (_, AugSpec.OAbstract _) -> None)
 
 (** spec helper: turn non-alive index to doncare *)
 let turn_dontcare (spec: AugSpec.io_spec list) (alive_idx: int list): AugSpec.io_spec list =
 	BatList.map (fun (idx, (inputs, const_opt)) ->
-		match const_opt with
-		| AugSpec.CDontCare ty -> (idx, (inputs, const_opt))
-		| AugSpec.CConcrete c ->
-			if BatList.mem idx alive_idx then
+		if BatList.mem idx alive_idx then
+			(idx, (inputs, const_opt))
+		else
+			match const_opt with
+			| AugSpec.ODontCare ty ->
 				(idx, (inputs, const_opt))
-			else
-				(idx, (inputs, AugSpec.CDontCare (Exprs.type_of_const c)))
-		| AugSpec.CAbstract a ->
-			if BatList.mem idx alive_idx then
-				(idx, (inputs, const_opt))
-			else
-				(idx, (inputs, AugSpec.CDontCare (Dom.AbstDom.AbstSig.get_type a)))
+			| _ ->
+				(idx, (inputs, AugSpec.ODontCare (AugSpec.type_of_output_spec const_opt)))
 	) (zip_with_index spec) |> BatList.map snd
 
 let covering_expr_set
@@ -558,7 +545,7 @@ let rec compose_for_sketch
 	| [] -> begin
 		match intermediate with
 		| ExprRewrite expr ->
-			if is_solution synth_ctx_compose.ctx_main.spec.sem_spec.spec_cex expr then
+			if AugSpec.is_solution_expr synth_ctx_compose.ctx_main.spec.sem_spec.spec_cex expr then
 				raise_solution_found synth_ctx_compose.ctx_main expr
 			else tick_compose_counter compose_counter CC_COMPLETE
 		| _ -> begin
@@ -850,7 +837,7 @@ let rec compose_for_sketch
 				compose_for_sketch synth_ctx_compose compose_counter plugged_rewrite sems ((addr, components_for_cur_hole) :: enums) ((expr, expr_size) :: chosen_components) holes_tail
 			end
 		) components_for_cur_hole
-
+ 
 and learn_ite
 	(ctx_learn_ite: synth_ctx_learn_ite)
 : Exprs.expr option
@@ -863,9 +850,9 @@ and learn_ite
 	let indexed_partial_desired_sig =
 		zip_with_index (BatList.map snd ctx_learn_ite.less_spec)
 		|> BatList.filter_map (function
-			| (idx, AugSpec.CConcrete c) -> Some (idx, c)
-			| (_, AugSpec.CDontCare _) -> None
-			| (_, AugSpec.CAbstract _) -> None)
+			| (idx, AugSpec.OConcrete c) -> Some (idx, c)
+			| (_, AugSpec.ODontCare _) -> None
+			| (_, AugSpec.OAbstract _) -> None)
 	in
 	let pts = BatList.map fst indexed_partial_desired_sig in
 	let full_covering_exprs = covering_expr_set ctx_learn_ite indexed_partial_desired_sig in
@@ -928,7 +915,12 @@ and learn_ite
 									turn_dontcare ctx_learn_ite.less_spec [idx]
 								in
 								let topdowns: (Grammar.rewrite * Analyzer.AbstState.t) list =
-									topdown_sketches_hole_count ~start_symbol:ctx_learn_ite.then_nt ctx_learn_ite.ctx_main.spec.syn_spec.grammar less_spec 2
+								  (* 매번 새로 sketch 만드는 이유: less_spec 기준으로 분석해야하기 때문 *)
+									topdown_sketches_hole_count
+										~start_symbol:ctx_learn_ite.then_nt
+										ctx_learn_ite.ctx_main.spec.syn_spec.grammar
+										less_spec
+										2
 								in
 								Logger.g_with_increased_depth (fun () ->
 									Logger.g_info_f "start to solve subproblem for %d:%s" idx (Exprs.string_of_const c);
@@ -1123,7 +1115,7 @@ and learn_ite
 							(Exprs.string_of_expr else_expr)
 						);
 						let ite = Exprs.Function (TRI_OP ITE, [pred; then_expr; else_expr], Exprs.type_of_expr then_expr) in
-						if is_solution ctx_learn_ite.less_spec ite then
+						if AugSpec.is_solution_expr ctx_learn_ite.less_spec ite then
 							Some ite
 						else begin
 							Logger.g_info_f "bad learn ite(bad solution is found): %s" (Exprs.string_of_expr ite);
@@ -1163,7 +1155,7 @@ and main_loop
 									else
 										next_target_size
 									in
-								grow nt rule growing_cs synth_ctx_main.spec.sem_spec.desired_output_signature (BatList.map fst synth_ctx_main.spec.sem_spec.spec_cex) target_size
+								grow nt rule growing_cs synth_ctx_main.spec.sem_spec target_size
 							) growing_cs synth_ctx_main.spec.syn_spec.nt_rule_list_wo_ite;
 						)
 					in
@@ -1259,7 +1251,7 @@ and main_loop
 					if BatList.is_empty holes then
 						(* sketch = program *)
 						let expr = Grammar.expr_of_rewrite_exn picked_partial in
-						if is_solution synth_ctx_main.spec.sem_spec.spec_cex expr then
+						if AugSpec.is_solution_expr synth_ctx_main.spec.sem_spec.spec_cex expr then
 							raise_solution_found synth_ctx_main expr
 						else
 							()
@@ -1325,8 +1317,7 @@ let synthesis_pbe
 		let initial_components = Logger.g_with_increased_depth (fun () ->
 				populate_initial_components
 					empty_components
-					spec.sem_spec.desired_output_signature
-					(BatList.map fst spec.sem_spec.spec_cex)
+					spec.sem_spec
 					spec.syn_spec.nt_rule_list_wo_ite
 					init_comp_size
 			)

@@ -102,11 +102,10 @@ exception SolutionFoundInGenerator of int * int * Exprs.expr (** max compo size,
 (* using components found so far, generate candidates of size `target_size' *)				
 let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 	(components: Components.component_pool)
-	(desired_sig: Exprs.signature)
-	(spec: AugSpec.ex_input list)
+	(sem_spec: AugSpec.sem_spec)
 	(target_size: int): Components.component_pool =
 	let start_time = Unix.gettimeofday () in
-	let aug_rule = wrap_aug_rewrite spec rule in
+	let aug_rule = wrap_aug_rewrite (BatList.map fst sem_spec.spec_cex) rule in
 	Logger.g_debug_f "grow: target size %d / applying rule %s -> %s"
 		target_size
 		(Grammar.string_of_non_terminal nt)
@@ -137,7 +136,7 @@ let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 							);
 							try
 								let (new_expr, signature) = aug_plug aug_rule instances in
-								if Exprs.compare_signature desired_sig signature = 0 then begin
+								if AugSpec.is_solution_sig sem_spec.spec_cex signature then begin
 									Logger.g_info_f "during growing components pool with target size %d, found solution within %d components" target_size (Components.get_num_total_components components);
 									raise (SolutionFoundInGenerator (target_size, Components.get_num_total_components components,new_expr))
 								end
@@ -170,8 +169,7 @@ let grow (nt: Grammar.non_terminal) (rule: Grammar.rewrite)
 
 let populate_initial_components
 	(components: Components.component_pool)
-	(desired_sig: SynthLang.Exprs.signature)
-	(spec: AugSpec.ex_input list)
+	(sem_spec: AugSpec.sem_spec)
 	(nt_rule_list: (Grammar.non_terminal * Grammar.rewrite) list)
 	(max_size: int)
 : Components.component_pool =
@@ -185,8 +183,8 @@ let populate_initial_components
 					(* rule without holes -> terminal, can be computed *)
 					try
 						let expr = Grammar.expr_of_rewrite_exn rule in
-						let signature = Exprs.compute_signature spec expr in
-						if Exprs.compare_signature desired_sig signature = 0 then begin
+						let signature = Exprs.compute_signature (BatList.map fst sem_spec.spec_cex) expr in
+						if AugSpec.is_solution_sig sem_spec.spec_cex signature then begin
 							Logger.g_info_f "During populating size 1 components, found #%d component as solution" (Components.get_num_total_components components);
 							raise (SolutionFoundInGenerator (1, Components.get_num_total_components components, expr))
 						end
@@ -204,7 +202,7 @@ let populate_initial_components
 		if (size <= max_size) then begin
 			let next =
 				List.fold_left (fun building_cs (nt, rule) ->
-					grow nt rule building_cs desired_sig spec size
+					grow nt rule building_cs sem_spec size
 				) building_cs nt_rule_list
 			in
 			iter next (size + 1)
@@ -214,8 +212,8 @@ let populate_initial_components
 	let components_n = iter components_1 2 in
 	BatList.fold_left (fun building_cs (nt, rule) ->
 			if BatSet.mem nt components.predicate_nts then begin
-				let components_n_1 = grow nt rule building_cs desired_sig spec (max_size + 1) in
-				grow nt rule components_n_1 desired_sig spec (max_size + 2);
+				let components_n_1 = grow nt rule building_cs sem_spec (max_size + 1) in
+				grow nt rule components_n_1 sem_spec (max_size + 2);
 			end
 			else building_cs
 		) components_n nt_rule_list

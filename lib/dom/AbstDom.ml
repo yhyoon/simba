@@ -145,47 +145,6 @@ module AbstSig = struct
             Bool (ABoolSig.alpha bl)
         | _ -> Bot
 
-    let alpha_output_spec (output_specs: Exprs.const list): t =
-        match output_specs with
-        | [] -> failwith "empty signature"
-        | Exprs.CBV (len, _) :: _ -> begin
-            match len with
-            | 64 ->
-                BitVec64 (BatList.map (fun c -> match c with
-                        | Exprs.CBV (_, i) -> RedProd64.from_int64 i
-                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const c)
-                    ) output_specs)
-            | 32 ->
-                BitVec32 (BatList.map (fun c -> match c with
-                        | Exprs.CBV (_, i) -> RedProd32.from_int64 i
-                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const c)
-                    ) output_specs)
-            | _ ->
-                let module I = MaskedInt64(struct let size = len end) in
-                let module P = RedProd.Make(I) in
-                BitVecGeneral (len, BatList.map (fun c -> match c with
-                        | Exprs.CBV (_, i) -> P.from_int64 i
-                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const c)
-                    ) output_specs)
-        end
-        | CBool _ :: _ ->
-            Bool (ABoolSig.of_list (BatList.map (fun c -> match c with
-                    | Exprs.CBool b -> Elem.from_bool false b
-                    | _ -> failwith_f "signature_of_const_list(%s in CBool list): kind mismatch" (Exprs.string_of_const c)
-                ) output_specs))
-        | _ -> Bot
-
-    let alpha_doncare_output (ty: Exprs.exprtype) (cnt: int): t =
-        match ty with
-        | BV 64 -> BitVec64 (BatList.make cnt RedProd64.top_repr)
-        | BV 32 -> BitVec32 (BatList.make cnt RedProd32.top_repr)
-        | BV len ->
-            let module I = MaskedInt64(struct let size = len end) in
-            let module P = RedProd.Make(I) in
-            BitVecGeneral (len, BatList.make cnt P.top_repr)
-        | Exprs.Bool -> Bool (ABoolSig.top_repr cnt)
-        | _ -> Bot
-
     let alphas (cl: Exprs.signature list): t =
         BatList.fold_left (fun a c -> join a (alpha c)) Bot cl
 
