@@ -154,9 +154,9 @@ let add_cex_spec (inputs, output_spec) spec =
             };
         }
 
-(* ex_input 을 대입했을 때 pred 가 true 가 된다는 사실로부터 output spec 을 생성한다 *)
-let alpha_predicate_constraint (ex_input: ex_input) (pred: Exprs.expr) (spec: t): io_spec =
-    failwith "Not Implemented"
+(* ex_input 을 대입했을 때 pred 가 true 가 된다는 사실로부터 input-output spec 을 생성한다 *)
+let alpha_predicate_constraint (pred: Exprs.expr) (spec: t): io_spec =
+    failwith_f "Not Implemented: alpha_predicate_constraint %s" (Exprs.string_of_expr pred)
 
 let add_trivial_example (spec: t): t =
     let trivial_sol =
@@ -168,8 +168,8 @@ let add_trivial_example (spec: t): t =
     | Some (CexIO cex, _) ->
         let _ = assert (not (List.mem cex spec.sem_spec.original_spec.spec_pbe)) in  
         add_cex_spec (aug_ex_io cex) spec
-    | Some (CexPred (ex_input, pred), _) ->
-        add_cex_spec (alpha_predicate_constraint ex_input pred spec) spec
+    | Some (CexPred pred, _) ->
+        add_cex_spec (alpha_predicate_constraint pred spec) spec
 
 let augment_contraints (spec: Specification.t): sem_spec =
     let io_spec_list =

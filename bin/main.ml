@@ -102,8 +102,8 @@ let rec cegis
 			let aug_cex = match cex with
 				| CexIO ex_io ->
 					SynthBase.AugSpec.aug_ex_io ex_io
-				| CexPred (ex_input, pred) ->
-					SynthBase.AugSpec.alpha_predicate_constraint ex_input pred spec
+				| CexPred pred ->
+					SynthBase.AugSpec.alpha_predicate_constraint pred spec
 		  in
 			(* cex(input-output pair) from constraint verifier(solver) *)
 			Logger.g_info_f "add counter example: %s" (SynthBase.AugSpec.string_of_io_spec aug_cex); 

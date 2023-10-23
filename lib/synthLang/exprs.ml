@@ -44,6 +44,13 @@ let rec get_params (expr: expr): expr BatSet.t =
 		BatList.fold_left (fun acc e -> BatSet.union acc (get_params e)) BatSet.empty exprs 
 	| _ -> BatSet.empty
 
+let rec get_vars (expr: expr): expr BatSet.t =
+	match expr with
+	| Var _ -> BatSet.singleton expr 
+	| Function (_, exprs, _) ->
+		BatList.fold_left (fun acc e -> BatSet.union acc (get_vars e)) BatSet.empty exprs 
+	| _ -> BatSet.empty
+
 let get_trivial_value (ty: exprtype): const =
 	match ty with
 	| Int -> CInt 0

@@ -82,7 +82,7 @@ let need_solver_check (t: t): bool =
 
 type counter_example =
   | CexIO of ex_io
-  | CexPred of ex_input * expr  (* inputs and predicate which holds for that inputs *)
+  | CexPred of expr  (* predicate which holds for target function *)
     (* maybe extended more ... *)
 
 let process_verification_constraints
@@ -118,7 +118,11 @@ let process_verification_constraints
 	params_forbidden_str_list @ avoid_existing_strs
 
 (* Using Z3 OCaml API *)
-let rec verify (forbidden_inputs: const list list) (avoid_existing: bool) (target_function_id: SynthLang.Operators.op) (args_list: (string * expr) list) (sol: expr) (spec: t): (counter_example * const list list) option =
+let rec verify
+    (forbidden_inputs: const list list) (avoid_existing: bool)
+    (target_function_id: SynthLang.Operators.op) (args_list: (string * expr) list)
+    (sol: expr) (spec: t)
+: (counter_example * const list list) option =
     let start = Sys.time () in
     match spec.spec_logic with
     | Some spec_logic -> begin
@@ -128,35 +132,59 @@ let rec verify (forbidden_inputs: const list list) (avoid_existing: bool) (targe
             (* process_verification_constraints ~output_expr_string_for_avoid_existing:(Some oracle_expr_smt_repr) forbidden_inputs (BatList.map snd spec.spec_pbe) params *)
         in
         let query_smt_repr =
-            let decl_params_smt_repr_list =
-                BatSet.fold (fun param acc_rev ->
-                    let decl_str = Printf.sprintf "(declare-const %s %s)"
-                        (string_of_expr param)
-                        (string_of_type ~z3:true (type_of_expr param))
-                    in
-                    decl_str::acc_rev
-                ) params []
-                |> BatList.rev
-            in
             let main_constraint_smt_repr =
                 match spec_logic with
                 | SpecOracle oracle_function ->
-                    Printf.sprintf "(assert (not (= %s %s)))"
+                    let decl_params_smt_repr_list =
+                        BatSet.fold (fun param acc_rev ->
+                            let decl_str = Printf.sprintf "(declare-const %s %s)"
+                                (string_of_expr param)
+                                (string_of_type ~z3:true (type_of_expr param))
+                            in
+                            decl_str::acc_rev
+                        ) params []
+                        |> BatList.rev
+                    in
+                    decl_params_smt_repr_list @
+                    [Printf.sprintf "(assert (not (= %s %s)))"
                         (string_of_expr oracle_function.oracle_function_body)
-                        (string_of_expr sol)
+                        (string_of_expr sol)]
                 | SpecGeneral predicate -> begin
+                    let decl_vars_smt_repr_list =
+                        let var_set =
+                            BatList.fold_left (fun acc p ->
+                                    SynthLang.Exprs.get_vars p |> BatSet.union acc
+                                ) BatSet.empty predicate
+                        in
+                        BatSet.fold (fun var acc_rev ->
+                            let decl_str = Printf.sprintf "(declare-const %s %s)"
+                                (string_of_expr var)
+                                (string_of_type ~z3:true (type_of_expr var))
+                            in
+                            decl_str::acc_rev
+                        ) var_set []
+                        |> BatList.rev
+                    in
                     match predicate with
                     | [] -> failwith "empty predicate"
                     | first_predicate :: predicate_tail ->
                         let concat = BatList.fold_left (fun acc p ->
-                            Printf.sprintf "(and %s %s)" acc (string_of_expr p)
-                            ) (string_of_expr first_predicate) predicate_tail
+                                let _ = Logger.g_debug_f "do inline_function for %s: fun = %s(%s)={%s}"
+                                    (string_of_expr p)
+                                    (SynthLang.Operators.op_to_string target_function_id)
+                                    (BatList.map snd args_list |> string_of_list string_of_expr)
+                                    (string_of_expr sol)
+                                in
+                                let inlined = inline_function p target_function_id (BatList.map snd args_list) sol in
+                                Printf.sprintf "(and %s %s)" acc (string_of_expr inlined)
+                            ) (string_of_expr (inline_function first_predicate target_function_id (BatList.map snd args_list) sol)) predicate_tail
                         in
-                        Printf.sprintf "(assert (not %s))" concat
+                        decl_vars_smt_repr_list @
+                        [Printf.sprintf "(assert (not %s))" concat]
                 end
             in
             let lines =
-                decl_params_smt_repr_list @ main_constraint_smt_repr :: additional_constraint_str
+                main_constraint_smt_repr @ additional_constraint_str
             in
             string_of_list ~first:"" ~last:"" ~sep:"\n" identity lines
         in
@@ -198,22 +226,22 @@ let rec verify (forbidden_inputs: const list list) (avoid_existing: bool) (targe
                         BatMap.add (Z3.Symbol.to_string symbol) value acc
                     ) BatMap.empty decls
                 in
-                let cex_input: const list =
-                    let _ =
-                        if BatMap.is_empty var_map then
-                        failwith "Z3 returns the empty model. Check out if (DY)LD_LIBRARY_PATH includes a path to the Z3 folder."
-                    in
-                    let param_ids = BatList.map snd args_list |> BatList.map string_of_expr in
-                    List.map (fun x -> try BatMap.find x var_map with Not_found -> assert false) param_ids
-                in
-                let sol_output_opt =
-                    try
-                        Some (compute_signature [cex_input] sol |> sig_hd)
-                    with UndefinedSemantics -> None
-                in
                 match spec_logic with
                 | SpecOracle oracle_function -> begin
+                    let cex_input: const list =
+                        let _ =
+                            if BatMap.is_empty var_map then
+                            failwith "Z3 returns the empty model. Check out if (DY)LD_LIBRARY_PATH includes a path to the Z3 folder."
+                        in
+                        let param_ids = BatList.map snd args_list |> BatList.map string_of_expr in
+                        List.map (fun x -> try BatMap.find x var_map with Not_found -> assert false) param_ids
+                    in
                     try
+                        let sol_output_opt =
+                            try
+                                Some (compute_signature [cex_input] sol |> sig_hd)
+                            with UndefinedSemantics -> None
+                        in
                         let cex_output = compute_signature [cex_input] oracle_function.oracle_function_body |> sig_hd in
                         Logger.g_debug_f "sol:%s" (BatOption.map_default string_of_const "N/A" sol_output_opt);
                         Logger.g_debug_f "oracle:%s" (string_of_const cex_output);
@@ -240,7 +268,7 @@ let rec verify (forbidden_inputs: const list list) (avoid_existing: bool) (targe
                                 Function (SynthLang.Operators.BOOL_OP (SynthLang.Operators.B_BIN_OP SynthLang.Operators.B_AND), [acc; assigned], Bool)
                             ) (BatList.hd predicates |> subst) (BatList.tl predicates)
                     in
-                    Some (CexPred (cex_input, cex_predicates), forbidden_inputs)
+                    Some (CexPred cex_predicates, forbidden_inputs)
                 end 
         end
     end

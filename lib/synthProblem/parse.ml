@@ -280,14 +280,10 @@ let process_constraints
         let exp = sexp_to_expr constraint_data id2var in
         (* let _ = Logger.g_debug (string_of_expr exp) in *)
         consume_pbe_spec exp target_function_id (spec, forall_var_map) |??
-        (fun () -> consume_oracle_spec exp target_function_id macro_instantiator (spec, forall_var_map)) |?!
+        (fun () -> consume_oracle_spec exp target_function_id macro_instantiator (spec, forall_var_map)) |??
+        (fun () -> consume_logic_spec exp (spec, forall_var_map)) |?!
         (fun () ->
-            (* failure case *)
-            match exp with
-            | Function (GEN_CMP_OP CMP_EQ, _, _) ->
-                failwith ("Not supported: synth-fun is missing")
-            | _ ->
-                failwith ("Not supported: not a SyGuS-pbe specification")
+            failwith ("Not supported constraint: " ^ (SynthLang.Exprs.string_of_expr exp))
         )
     ) (Specification.empty_spec, BatMap.empty) constraints_data
 
