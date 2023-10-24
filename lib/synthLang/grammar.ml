@@ -141,7 +141,7 @@ and ret_type_of_func_rewrite (op: op) (operands: rewrite list): exprtype =
 	| STR_OP S_PREFIX_OF | STR_OP S_SUFFIX_OF | STR_OP S_CONTAINS ->
 		Bool
 	| GENERAL_FUNC _ ->
-		failwith "ret_type_of_func_rewrite: GENERAL_FUNC"
+		failwith_f "ret_type_of_func_rewrite: GENERAL_FUNC %s" (op_to_string op)
 
 let normalized_func_rewrite (op: op) (children: rewrite list): rewrite =
 	let rec expr_children_or_none expr_children unchecked_children =

@@ -12,17 +12,9 @@ module Elem = ABitSeq.Elem
 module IntBV64 = MaskedInt64(struct let size = 64 end)
 module IntBV32 = MaskedInt64(struct let size = 32 end)
 
-module ABitSeq64 = ABitSeq.Make(IntBV64)
-module SignedIntv64 = SignedIntv.Make(IntBV64)
-module UnsignedIntv64 = UnsignedIntv.Make(IntBV64)
-module RedProd64 = RedProd.Make(IntBV64)
-
-module ABitSeq32 = ABitSeq.Make(IntBV32)
-module SignedIntv32 = SignedIntv.Make(IntBV32)
-module UnsignedIntv32 = UnsignedIntv.Make(IntBV32)
-module RedProd32 = RedProd.Make(IntBV32)
-
 module RedProd = RedProd
+module RedProd64 = RedProd.Make(IntBV64)
+module RedProd32 = RedProd.Make(IntBV32)
 
 (** Abstracted Signature (from type Exprs.signature) *)
 module AbstSig = struct

@@ -23,16 +23,18 @@ let debug_string_of_sexp (sexp: Sexp.t): string =
     | Sexp.Atom _ ->
         "A:" ^ SexpUtil.string_of_sexp sexp
 
-let rec sexp_to_expr (sexp: Sexp.t) (args_map: (string, expr) BatMap.t): expr =
+let rec sexp_to_expr (sexp: Sexp.t) (args_map: (string, expr) BatMap.t) (macro_instantiator: (op, expr) BatMap.t) (target_function_id: op) (target_function_ret_type: exprtype): expr =
     match sexp with
     | Sexp.List sexps' ->
         let _ = assert ((BatList.length sexps') >= 1) in  
         let op = Sexp.to_string (BatList.hd sexps') |> string_to_op in
         let children =
-            BatList.map (fun sexp' -> sexp_to_expr sexp' args_map) (BatList.tl sexps')
+            BatList.map (fun sexp' -> sexp_to_expr sexp' args_map macro_instantiator target_function_id target_function_ret_type) (BatList.tl sexps')
         in
         let expr_ty =
-            ret_type_of_func_rewrite op (BatList.map expr_rewrite children)
+            (if op = target_function_id then Some target_function_ret_type else None) |??
+            (fun () -> BatMap.find_opt op macro_instantiator |> BatOption.map type_of_expr) |?!
+            (fun () -> ret_type_of_func_rewrite op (BatList.map expr_rewrite children))
         in 
         Function (op, children, expr_ty)
     | Sexp.Atom _ -> begin
@@ -87,14 +89,14 @@ let get_args_list (args_data: Sexp.t): (string * expr) list =
 
 (* return: (string, SynthLang.Exprs.expr (with Param)) BatMap.t *)
 (* TODO: in case where other definitions used in a definition *)
-let process_definitions (defs_data: Sexp.t list list): (op, expr) BatMap.t =
+let process_definitions (defs_data: Sexp.t list list) (target_function_id: op) (target_function_ret_type: exprtype): (op, expr) BatMap.t =
     BatList.fold_left (fun m def_data ->
         match def_data with
         | [name_data; args_data; ret_type_data; body_data] ->
             let name = Sexp.to_string name_data in 
             let ret_type = SexpUtil.sexp_to_type ret_type_data in 
             let args_list = get_args_list args_data in 
-            let expr = sexp_to_expr body_data (BatMap.of_seq (BatList.to_seq args_list)) in
+            let expr = sexp_to_expr body_data (BatMap.of_seq (BatList.to_seq args_list)) m target_function_id target_function_ret_type in
             let _ =
                 if Global.t.cli_options.get_size then begin
                     let size = (SynthLang.Exprs.size_of_expr expr) in 
@@ -172,14 +174,14 @@ let process_grammar (args_map: (string, expr) BatMap.t) (ret_type: exprtype) (gr
         BatList.fold_left (process_rules nts) empty_grammar nt_rules_data   
     | _ -> assert false  
 
-let process_synth_funcs (synth_fun_data: Sexp.t list): op * (string * expr) list * grammar =
+let process_synth_funcs (synth_fun_data: Sexp.t list): op * (string * expr) list * exprtype * grammar =
     match synth_fun_data with
     | [name_data; args_data; ret_type_data; grammar_data] ->
         let name = Sexp.to_string name_data in
         let args_list = get_args_list args_data in  
         let ret_type = SexpUtil.sexp_to_type ret_type_data in
         let grammar = process_grammar (BatMap.of_seq (BatList.to_seq args_list)) ret_type grammar_data in 
-        (string_to_op name, args_list, grammar)
+        (string_to_op name, args_list, ret_type, grammar)
     | _ -> assert false
 
 (* return: name -> Var expr *)
@@ -266,6 +268,7 @@ let consume_logic_spec
 let process_constraints
     (grammar: grammar)
     (target_function_id: op)
+    (target_function_ret_type: exprtype)
     (constraints_data: Sexp.t list list)
     (macro_instantiator: (op, expr) BatMap.t)
     (id2var: (string, expr) BatMap.t)
@@ -277,7 +280,7 @@ let process_constraints
           | _ -> assert false
         in
         (* forall_var_map : variable name -> Var(name, ty) *) 
-        let exp = sexp_to_expr constraint_data id2var in
+        let exp = sexp_to_expr constraint_data id2var macro_instantiator target_function_id target_function_ret_type in
         (* let _ = Logger.g_debug (string_of_expr exp) in *)
         consume_pbe_spec exp target_function_id (spec, forall_var_map) |??
         (fun () -> consume_oracle_spec exp target_function_id macro_instantiator (spec, forall_var_map)) |??
@@ -308,24 +311,24 @@ let parse (file: string): parse_result =
     let sexps = Sexp.load_sexps temp_preprocessed_file in
     let _ = Unix.unlink temp_preprocessed_file in
     
-    let macro_instantiator: (op, expr) BatMap.t =
-        let defs_data = SexpUtil.filter_sexps_for "define-fun" sexps in
-            (* BatSet.iter (fun sexp_list ->                                       *)
-            (*     let sexp = Sexp.List ((Sexp.Atom "define-fun") :: sexp_list) in    *)
-            (*     Logger.g_debug (debug_string_of_sexp sexp)                                *)
-            (* )  defs_data;                                                       *)
-        process_definitions defs_data
-    in
     (* BatMap.iter (fun name expr ->               *)
     (*     Logger.g_debug (sexpstr_of_fun name expr)  *)
     (* ) macro_instantiator;                       *)
-    let target_function_id, args_list, grammar =
+    let target_function_id, args_list, target_function_ret_type, grammar =
         match SexpUtil.filter_sexps_for "synth-fun" sexps with
         | [] -> failwith "No target function to be synthesized is given."
         | [singleton] ->
             process_synth_funcs singleton
         | _ -> failwith "Multi-function synthesis is not supported." 
     in 
+    let macro_instantiator: (op, expr) BatMap.t =
+        let defs_data = SexpUtil.filter_sexps_for "define-fun" sexps in
+            (* BatSet.iter (fun sexp_list ->                                       *)
+            (*     let sexp = Sexp.List ((Sexp.Atom "define-fun") :: sexp_list) in    *)
+            (*     Logger.g_debug (debug_string_of_sexp sexp)                                *)
+            (* )  defs_data;                                                       *)
+        process_definitions defs_data target_function_id target_function_ret_type
+    in
     (* Logger.g_debug (SynthLang.Grammar.string_of_grammar grammar); *)
     let (spec, forall_var_map) =
         let id2var =
@@ -334,7 +337,7 @@ let parse (file: string): parse_result =
         in
         let constraints_data = SexpUtil.filter_sexps_for "constraint" sexps in
         (* Logger.g_debug (string_of_list debug_string_of_sexp (BatSet.choose constraints_data)); *)
-        process_constraints grammar target_function_id constraints_data macro_instantiator id2var
+        process_constraints grammar target_function_id target_function_ret_type constraints_data macro_instantiator id2var
     in
     Logger.g_debug (Specification.string_of_ex_io_list spec.spec_pbe);
     {
