@@ -40,6 +40,19 @@ type int_op =
     | I_DIV
     | I_MOD
 
+type str_op =
+    | S_LEN
+    | S_STR_TO_INT
+    | S_INT_TO_STR
+    | S_AT
+    | S_CONCAT
+    | S_CONTAINS
+    | S_PREFIX_OF
+    | S_SUFFIX_OF
+    | S_INDEX_OF
+    | S_REPLACE
+    | S_SUBSTR
+
 type cmp_op =
     | CMP_EQ | CMP_LT | CMP_LE | CMP_GT | CMP_GE
 
@@ -47,6 +60,7 @@ type op =
     | BV_OP of bv_op
     | BOOL_OP of bool_op
     | INT_OP of int_op
+    | STR_OP of str_op
     | TRI_OP of tri_op
     | GEN_CMP_OP of cmp_op
     | GENERAL_FUNC of string
@@ -123,10 +137,25 @@ let int_table: (string * int_op) BatSeq.t = BatList.to_seq [
     ("%", I_MOD);
 ]
 
+let str_table: (string * str_op) BatSeq.t = BatList.to_seq [
+    ("str.len", S_LEN);
+    ("str.to.int", S_STR_TO_INT);
+    ("int.to.str", S_INT_TO_STR);
+    ("str.at", S_AT);
+    ("str.++", S_CONCAT);
+    ("str.contains", S_CONTAINS);
+    ("str.prefixof", S_PREFIX_OF);
+    ("str.suffixof", S_SUFFIX_OF);
+    ("str.indexof", S_INDEX_OF);
+    ("str.replace", S_REPLACE);
+    ("str.substr", S_SUBSTR);
+]
+
 let all_table: (string * op) BatSeq.t =
     (bv_table |> BatSeq.map (fun (s,o) -> (s, BV_OP o)))
     |> BatSeq.append (bool_table |> BatSeq.map (fun (s,o) -> (s, BOOL_OP o)))
     |> BatSeq.append (int_table |> BatSeq.map (fun (s,o) -> (s, INT_OP o)))
+    |> BatSeq.append (str_table |> BatSeq.map (fun (s,o) -> (s, STR_OP o)))
     |> BatSeq.append (tri_table |> BatSeq.map (fun (s,o) -> (s, TRI_OP o)))
     |> BatSeq.append (cmp_table |> BatSeq.map (fun (s,o) -> (s, GEN_CMP_OP o)))
 
@@ -153,6 +182,9 @@ let bool_map: (string, bool_op) BatMap.t =
 
 let int_map: (string, int_op) BatMap.t =
     BatMap.of_seq int_table
+
+let str_map: (string, str_op) BatMap.t =
+    BatMap.of_seq str_table
 
 let all_map: (string, op) BatMap.t =
     BatMap.of_seq all_table
@@ -195,9 +227,3 @@ let is_commutative_bv_bin_op (bo: bv_bin_op): bool = BatSet.mem bo comm_bv_bin_o
 let is_commutative_bool_bin_op (bo: bool_bin_op): bool = BatSet.mem bo comm_bool_bin_op
 
 let is_commutative_op (op: op): bool = BatSet.mem op comm_all_op
-
-let is_str_op (op: op): bool = match op with
-    | GENERAL_FUNC op_str ->
-        (BatString.starts_with op_str "str.") ||
-            (BatString.ends_with op_str ".str")
-    | _ -> false

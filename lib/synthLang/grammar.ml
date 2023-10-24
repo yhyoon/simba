@@ -134,10 +134,14 @@ and ret_type_of_func_rewrite (op: op) (operands: rewrite list): exprtype =
 		Bool
 	| INT_OP _ ->
 		Int
-	| GENERAL_FUNC op_str ->
-		if is_str_op op then
-			String
-		else Int
+	| STR_OP S_LEN | STR_OP S_STR_TO_INT | STR_OP S_INDEX_OF ->
+		Int
+	| STR_OP S_INT_TO_STR | STR_OP S_AT | STR_OP S_CONCAT | STR_OP S_REPLACE | STR_OP S_SUBSTR ->
+		String
+	| STR_OP S_PREFIX_OF | STR_OP S_SUFFIX_OF | STR_OP S_CONTAINS ->
+		Bool
+	| GENERAL_FUNC _ ->
+		failwith "ret_type_of_func_rewrite: GENERAL_FUNC"
 
 let normalized_func_rewrite (op: op) (children: rewrite list): rewrite =
 	let rec expr_children_or_none expr_children unchecked_children =
