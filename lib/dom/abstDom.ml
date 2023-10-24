@@ -22,6 +22,8 @@ module SignedIntv32 = SignedIntv.Make(IntBV32)
 module UnsignedIntv32 = UnsignedIntv.Make(IntBV32)
 module RedProd32 = RedProd.Make(IntBV32)
 
+module RedProd = RedProd
+
 (** Abstracted Signature (from type Exprs.signature) *)
 module AbstSig = struct
     type t =
@@ -43,6 +45,15 @@ module AbstSig = struct
             string_of_list P.to_string pl
         | Bool bl -> ABoolSig.to_string bl
         | Top -> "top"
+
+    let get_type (t: t): Exprs.exprtype =
+        match t with
+        | Bot -> failwith "get_type: Bot"
+        | BitVec64 _ -> Exprs.BV 64
+        | BitVec32 _ -> Exprs.BV 32
+        | BitVecGeneral (len, _) -> Exprs.BV len
+        | Bool _ -> Exprs.Bool
+        | Top -> failwith "get_type: Top"
 
     (* partial order *)
     let bot_repr: t = Bot
@@ -132,40 +143,6 @@ module AbstSig = struct
         end
         | SigBool bl ->
             Bool (ABoolSig.alpha bl)
-        | _ -> Bot
-
-    let alpha_output_spec (output_specs: Exprs.const_opt list): t =
-        match output_specs with
-        | [] -> failwith "empty signature"
-        | Exprs.CDefined Exprs.CBV (len, _) :: _ | Exprs.CDontCare BV len :: _ -> begin
-            match len with
-            | 64 ->
-                BitVec64 (BatList.map (fun c -> match c with
-                        | Exprs.CDefined (Exprs.CBV (_, i)) -> RedProd64.from_int64 i
-                        | Exprs.CDontCare _ -> RedProd64.top_repr
-                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const_opt c)
-                    ) output_specs)
-            | 32 ->
-                BitVec32 (BatList.map (fun c -> match c with
-                        | Exprs.CDefined (Exprs.CBV (_, i)) -> RedProd32.from_int64 i
-                        | Exprs.CDontCare _ -> RedProd32.top_repr
-                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const_opt c)
-                    ) output_specs)
-            | _ ->
-                let module I = MaskedInt64(struct let size = len end) in
-                let module P = RedProd.Make(I) in
-                BitVecGeneral (len, BatList.map (fun c -> match c with
-                        | Exprs.CDefined (Exprs.CBV (_, i)) -> P.from_int64 i
-                        | Exprs.CDontCare _ -> P.top_repr
-                        | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (Exprs.string_of_const_opt c)
-                    ) output_specs)
-        end
-        | Exprs.CDefined CBool _ :: _ | Exprs.CDontCare Exprs.Bool :: _ ->
-            Bool (ABoolSig.of_list (BatList.map (fun c -> match c with
-                    | Exprs.CDefined (Exprs.CBool b) -> Elem.from_bool false b
-                    | Exprs.CDontCare _ -> Elem.B_Top
-                    | _ -> failwith_f "signature_of_const_list(%s in CBool list): kind mismatch" (Exprs.string_of_const_opt c)
-                ) output_specs))
         | _ -> Bot
 
     let alphas (cl: Exprs.signature list): t =

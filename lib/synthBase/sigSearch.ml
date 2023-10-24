@@ -6,25 +6,63 @@ type node_key = int * const
 
 let string_of_node_key ((idx,c): node_key): string = "(" ^ string_of_const c  ^ "," ^ string_of_int idx ^ ")"
 
-type node_val = {
-    mutable exprs: ExprSigSet.t
-}
-
 type bool_table = {
     true_subsig_set: BatBitSet.t array;
     false_subsig_set: BatBitSet.t array;
     subsig_expr_set: ExprSigSet.t option array;
 }
 
+let up_true_subsig_set (bt: bool_table) (f: BatBitSet.t array -> BatBitSet.t array): bool_table =
+    {bt with true_subsig_set = f bt.true_subsig_set}
+
+let up_false_subsig_set (bt: bool_table) (f: BatBitSet.t array -> BatBitSet.t array): bool_table =
+    {bt with false_subsig_set = f bt.false_subsig_set}
+
+let up_subsig_expr_set (bt: bool_table) (f: ExprSigSet.t option array -> ExprSigSet.t option array): bool_table =
+    {bt with subsig_expr_set = f bt.subsig_expr_set}
+
+let up_subsig_expr_set_byte (bt: bool_table) (byte: int) (f: ExprSigSet.t option -> ExprSigSet.t option): bool_table =
+    up_subsig_expr_set bt (fun arr ->
+            arr_copy_set byte (f arr.(byte)) arr
+        )
+
+(**
+    holding information for same-sized exprs
+    *)
 type sized_table = {
-    index_const_exprs: (const, node_val) BatMap.t array;
+    index_const_exprs: (const, ExprSigSet.t) BatMap.t array; (* index -> const -> expr set *)
     index_sorted_consts: const array option array; (* index |-> sorted key list of index_const_exprs.(index), sort by unsigned order *)
     bool_table: bool_table array; (* byte_index |-> byte_info *)
 }
 
+let up_index_const_exprs (st: sized_table) (f: (const, ExprSigSet.t) BatMap.t array -> (const, ExprSigSet.t) BatMap.t array): sized_table =
+    {st with index_const_exprs = f st.index_const_exprs}
+
+let up_index_const_exprs_idx (st: sized_table) ((idx, c): node_key) (f: ExprSigSet.t -> ExprSigSet.t): sized_table =
+    up_index_const_exprs st (fun arr ->
+        arr_copy_set
+            idx
+            (BatMap.update_stdlib c (function
+                | None -> Some (f ExprSigSet.empty)
+                | Some s -> Some (f s)
+            ) (arr.(idx)))
+            arr
+    )
+
+let up_index_sorted_consts (st: sized_table) (f: const array option array -> const array option array): sized_table =
+    {st with index_sorted_consts = f st.index_sorted_consts}
+
+let up_bool_table (st: sized_table) (f: bool_table array -> bool_table array): sized_table =
+    {st with bool_table = f st.bool_table}
+
+let up_bool_table_idx (st: sized_table) (idx: int) (f: bool_table -> bool_table): sized_table =
+    up_bool_table st (fun arr ->
+            arr_copy_set idx (f arr.(idx)) arr
+        )
+
 type t = {
     io_pair_count: int;
-    mutable tables: sized_table array; (* expr_size |-> (index |-> const |-> exprs set) | (byte_index |-> byte_info) *)
+    tables: sized_table array; (* expr_size |-> (index |-> const |-> exprs set) | (byte_index |-> byte_info) *)
 }
 
 (* mod in range [1, b] instead of [0, b-1] *)
@@ -64,7 +102,7 @@ let bit_width_to_bt_size (bit_width: int): int =
     end;
     (!bit_width_to_bt_size_cache).(bit_width)
 
-let create_bool_table(): bool_table = {
+let empty_bool_table: bool_table = {
     true_subsig_set = BatArray.init 8 (fun _ -> BatBitSet.create 256);
     false_subsig_set = BatArray.init 8 (fun _ -> BatBitSet.create 256);
     subsig_expr_set = BatArray.make 256 (Some ExprSigSet.empty);
@@ -73,8 +111,16 @@ let create_bool_table(): bool_table = {
 let create_sized_table(io_pair_count: int): sized_table = {
     index_const_exprs = BatArray.make io_pair_count BatMap.empty;
     index_sorted_consts = BatArray.make io_pair_count None;
-    bool_table = BatArray.init (bit_width_to_bt_size io_pair_count) (fun _ -> create_bool_table());
+    bool_table = BatArray.make (bit_width_to_bt_size io_pair_count) empty_bool_table;
 }
+
+let up_tables (t: t) (f: sized_table array -> sized_table array): t =
+    {t with tables = f t.tables}
+
+let up_tables_idx (t: t) (size: int) (f: sized_table -> sized_table): t =
+    up_tables t (fun arr ->
+            arr_copy_update_extend size f (create_sized_table t.io_pair_count) arr
+        )
 
 let bit_set_fold (f: int -> 'a -> 'a) (set: BatBitSet.t) (z: 'a): 'a =
     let rec aux i z =
@@ -89,15 +135,10 @@ let bit_set_to_string (set: BatBitSet.t): string =
     (bit_set_fold (fun i l -> i :: l) set []) |> BatList.rev |> string_of_list ~first:"{" ~last:"}" ~sep:"," (bin_string_of_int ~min_length:8)
 
 let get_sized_table (expr_size: int) (t: t): sized_table =
-    if expr_size >= BatArray.length t.tables then begin
-        t.tables <- BatArray.init (expr_size + 1) (fun idx ->
-            if idx < BatArray.length t.tables then
-                t.tables.(idx)
-            else
-                create_sized_table t.io_pair_count
-        )
-    end;
-    t.tables.(expr_size)
+    if expr_size < BatArray.length t.tables then
+        t.tables.(expr_size)
+    else
+        create_sized_table t.io_pair_count
 
 let dump_table (t: t): unit =
     Logger.g_info_f "=== %d io pairs ===" t.io_pair_count;
@@ -111,7 +152,7 @@ let dump_table (t: t): unit =
                         BatMap.iter (fun const node ->
                             Logger.g_info_f "%s |->" (string_of_node_key (idx,const));
                             Logger.g_with_increased_depth (fun () ->
-                                Logger.g_info_f "exprs: %s" (ExprSigSet.to_string node.exprs);
+                                Logger.g_info_f "exprs: %s" (ExprSigSet.to_string node);
                             )
                         ) m
                     ) sized_tbl.index_const_exprs;
@@ -140,12 +181,11 @@ let dump_table (t: t): unit =
         ) t.tables
     )
 
-let find_node ((idx,c): node_key) (sized_table: sized_table): node_val =
-    if idx < BatArray.length sized_table.index_const_exprs then BatMap.find c sized_table.index_const_exprs.(idx)
-    else failwith_f "idx %d in node_key is over %d" idx (BatArray.length sized_table.index_const_exprs)
-
-let add_node ((idx,c): node_key) (node_val: node_val) (sized_table: sized_table): unit =
-    sized_table.index_const_exprs.(idx) <- BatMap.add c node_val sized_table.index_const_exprs.(idx)
+let find_node ((idx,c): node_key) (sized_table: sized_table): ExprSigSet.t =
+    if idx < BatArray.length sized_table.index_const_exprs then
+        BatMap.find c sized_table.index_const_exprs.(idx)
+    else
+        failwith_f "idx %d in node_key is over %d" idx (BatArray.length sized_table.index_const_exprs)
 
 let create_empty(io_pair_count: int): t = {
     io_pair_count = io_pair_count;
@@ -155,67 +195,91 @@ let create_empty(io_pair_count: int): t = {
 let key_of_sig (signature: signature): node_key list =
     const_list_of_signature signature |> zip_with_index
 
-let add (full_sig: signature) (expr: expr) (signature: signature) (expr_size: int) (t: t): unit =
+let add (full_sig: signature) (expr: expr) (signature: signature) (expr_size: int) (t: t): t =
     let start_time = Unix.gettimeofday() in
-    let sized_table = get_sized_table expr_size t in
-    (match full_sig with
-    | SigBool bl ->
-        let arr_len = BatArray.length bl.bits in
-        let rec handle_bits ?(bit_idx: int = 0) (bt: bool_table) (byte: int): unit =
-            if bit_idx < 8 then begin
-                let _ =
-                    if byte land (1 lsl bit_idx) <> 0 then
-                        BatBitSet.set bt.true_subsig_set.(bit_idx) byte
+    let result =
+        up_tables_idx t expr_size (fun sized_table ->
+            match full_sig with
+            | SigBool bl ->
+                let arr_len = BatArray.length bl.bits in
+                let rec handle_bits ?(bit_idx: int = 0) (bt: bool_table) (byte: int): bool_table =
+                    if bit_idx < 8 then begin
+                        let updater =
+                            if byte land (1 lsl bit_idx) <> 0 then
+                                up_true_subsig_set
+                            else
+                                up_false_subsig_set
+                        in
+                        let updated_bt =
+                            updater bt (fun arr ->
+                                    arr_copy_set bit_idx
+                                        (BatBitSet.add byte arr.(bit_idx))
+                                        arr
+                                )
+                        in
+                        handle_bits ~bit_idx:(bit_idx + 1) updated_bt byte
+                    end
+                    else bt
+                in
+                let rec handle_byte ((st, byte_idx): sized_table * int) (remain_byte_cnt: int) (v: int): sized_table * int =
+                    if remain_byte_cnt > 0 then begin
+                        let byte = v land 255 in
+                        let st_1 =
+                            up_bool_table_idx st byte_idx (fun bt ->
+                                    handle_bits bt byte
+                                )
+                        in
+                        let st_2 =
+                            let _ =
+                                (* assertion *)
+                                failcond_f
+                                    (byte_idx >= BatArray.length st_1.bool_table)
+                                    "bool_table.(%d) out of bound %d" byte_idx (BatArray.length st_1.bool_table);
+                                failcond_f
+                                    (byte >= BatArray.length (st_1.bool_table.(byte_idx).subsig_expr_set))
+                                    "sized_table.bool_table.(%d).subsig_expr_set.(%d) out of bound %d"
+                                        byte_idx
+                                        byte
+                                        (BatArray.length (st_1.bool_table.(byte_idx).subsig_expr_set))
+                            in
+                            (* add expr to actual expr set *)
+                            (* Logger.g_info_f "add expr to bool_table.(%d).sub_table.(%d) = %s" byte_idx byte (string_of_set string_of_expr set); *)
+                            up_bool_table_idx st_1 byte_idx (fun bt ->
+                                    up_subsig_expr_set_byte bt byte (fun opt ->
+                                        match opt with
+                                        | Some set ->
+                                            Some (ExprSigSet.add (expr, signature) set)
+                                        | None ->
+                                            opt
+                                    ) 
+                                )
+                        in
+                        handle_byte (st_2, byte_idx + 1) (remain_byte_cnt - 1) (v lsr 8)
+                    end
+                    else (st, byte_idx)
+                in
+                (* hack: this logic is exploitation of ImmBitVec internal data structure *)
+                BatArray.fold_lefti (fun (st, byte_idx) word_idx v ->
+                    if word_idx < arr_len - 1 then (* use all bits in word *)
+                        handle_byte (st, byte_idx) byte_count_in_word v
                     else
-                        BatBitSet.set bt.false_subsig_set.(bit_idx) byte
-                in
-                handle_bits ~bit_idx:(bit_idx + 1) bt byte;
-            end
-            else ()
-        in
-        let rec handle_byte (byte_idx: int) (remain_byte_cnt: int) (v: int): int =
-            if remain_byte_cnt > 0 then begin
-                let byte = v land 255 in
-                let _ = handle_bits sized_table.bool_table.(byte_idx) byte in (* register byte to bit field *)
-                let _ =
-                    if byte_idx >= BatArray.length sized_table.bool_table then failwith_f "bool_table.(%d) out of bound %d" byte_idx (BatArray.length sized_table.bool_table);
-                    if byte >= BatArray.length (sized_table.bool_table.(byte_idx).subsig_expr_set) then failwith_f "sized_table.bool_table.(%d).subsig_expr_set.(%d) out of bound %d" byte_idx byte (BatArray.length (sized_table.bool_table.(byte_idx).subsig_expr_set));
-                    match sized_table.bool_table.(byte_idx).subsig_expr_set.(byte) with
-                    | Some set -> begin
-                        (* add expr to actual expr set *)
-                        (* Logger.g_info_f "add expr to bool_table.(%d).sub_table.(%d) = %s" byte_idx byte (string_of_set string_of_expr set); *)
-                        sized_table.bool_table.(byte_idx).subsig_expr_set.(byte) <- Some(ExprSigSet.add (expr, signature) set);
-                        (* Logger.g_info_f "after add: bool_table.(%d).sub_table.(%d) = %s" byte_idx byte (string_of_set string_of_expr (BatOption.get sized_table.bool_table.(byte_idx).subsig_expr_set.(byte))); *)
-                    end
-                    | None -> begin
-                        Logger.g_info_f "ignore None set";
-                        ()
-                    end
-                in
-                handle_byte (byte_idx + 1) (remain_byte_cnt - 1) (v lsr 8)
-            end
-            else byte_idx
-        in
-        (* hack: this logic is exploitation of ImmBitVec internal data structure *)
-        BatArray.fold_lefti (fun byte_idx word_idx v ->
-                if word_idx < arr_len - 1 then (* use all bits in word *)
-                    handle_byte byte_idx byte_count_in_word v
-                else
-                    (* last word *)
-                    let last_word_bit_width = mod_from_one bl.bits_width Sys.int_size in
-                    handle_byte byte_idx ((last_word_bit_width - 1) / 8 + 1) v
-            ) 0 bl.bits |> ignore
-    | _ ->
-        BatList.iter (fun key ->
-                try
-                    let node = find_node key sized_table in
-                    node.exprs <- ExprSigSet.add (expr, signature) node.exprs
-                with Not_found ->
-                    add_node key {exprs = ExprSigSet.singleton (expr, signature)} sized_table
-            ) (key_of_sig full_sig)
-    );
-    let end_time = Unix.gettimeofday() in
-    Global.add_search_tbl_build_time (end_time -. start_time) Global.t
+                        (* last word *)
+                        let last_word_bit_width = mod_from_one bl.bits_width Sys.int_size in
+                        handle_byte (st, byte_idx) ((last_word_bit_width - 1) / 8 + 1) v
+                ) (sized_table, 0) bl.bits |> fst
+            | _ ->
+                BatList.fold_left (fun sized_table key ->
+                        up_index_const_exprs_idx sized_table
+                            key
+                            (ExprSigSet.add (expr, signature))
+                    ) sized_table (key_of_sig full_sig)
+        )
+    in
+    let _ = (* record time *)
+        let end_time = Unix.gettimeofday() in
+        Global.add_search_tbl_build_time (end_time -. start_time) Global.t
+    in
+    result
 
 exception Too_big_set
 
@@ -271,11 +335,11 @@ let find (partial_sig: node_key list) (expr_size: int) (t: t): ExprSigSet.t =
             find_bool all_bool_partial_sig (get_sized_table expr_size t).bool_table
         | first :: tail ->
             (* use general table *)
-            let first_s = (find_node first sized_table).exprs in
+            let first_s = find_node first sized_table in
             BatList.fold_left (fun result k ->
                     if ExprSigSet.is_empty result then raise Not_found
                     else
-                        let s = (find_node k sized_table).exprs in
+                        let s = find_node k sized_table in
                         ExprSigSet.inter result s
                 ) first_s tail
     with Not_found -> ExprSigSet.empty

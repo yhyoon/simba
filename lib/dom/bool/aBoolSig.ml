@@ -216,6 +216,7 @@ let forward_bin_op (bop: Operators.bool_bin_op) (d1: t) (d2: t): t =
         | Operators.B_AND -> forward_and
         | Operators.B_OR -> forward_or
         | Operators.B_XOR -> forward_xor
+        | Operators.B_IMPLIES -> fun b1 b2 -> forward_or (forward_not b1) b2
     in
     bf d1 d2
 
@@ -315,6 +316,10 @@ let backward_bin_op (bop: Operators.bool_bin_op) (post: t) (d1: t) (d2: t): t * 
         | Operators.B_AND -> backward_and
         | Operators.B_OR -> backward_or
         | Operators.B_XOR -> backward_xor
+        | Operators.B_IMPLIES -> fun post b1 b2 ->
+            let (not_b1', b2') = backward_or post (forward_not b1) b2 in
+            let b1' = backward_not not_b1' b1 in
+            (b1', b2')
     in
     bf post d1 d2
 

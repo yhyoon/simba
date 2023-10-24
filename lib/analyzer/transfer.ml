@@ -29,7 +29,7 @@ let forward_analysis
     (pgm: rewrite)
     (subst_spot: addr)
     (prev_semantics: AbstState.t)
-    (spec: SynthSpec.Specification.iospec)
+    (spec: SynthBase.AugSpec.ex_input list)
     : addr option * AbstState.t (* last_updated_spot * state *)
 =
     let rec forward_aux
@@ -83,7 +83,7 @@ let backward_analysis
     (pgm: rewrite)
     (start_spot: addr)
     (prev_semantics: AbstState.t)
-    (spec: SynthSpec.Specification.iospec)
+    (output_spec: AbstSig.t)
     : AbstState.t
 =
     let rec backward_aux
@@ -117,7 +117,7 @@ let backward_analysis
     in
     let start_post_cond =
         if start_spot = [] then
-            AbstSig.alpha_output_spec (BatList.map snd spec)
+            output_spec
         else
             AbstState.lookup start_spot prev_semantics
     in
@@ -128,22 +128,25 @@ type feasibility =
     | Infeasible
     | DoBruteForce
     | NeedMoreAnalysis of AbstState.t
+    | DesiredExpr of expr
 
 let check_feasibility
     (candidate: rewrite)
     (plugged_spot: addr)
-    (spec: SynthSpec.Specification.iospec)
+    (spec: SynthBase.AugSpec.io_spec list)
     (prev_semantics: AbstState.t)
     : feasibility =
     (* assume candidate is not ExprRewrite *)
     let hole_size = count_holes candidate in
+    let input_spec, output_spec = BatList.split spec in
+    let abst_output_spec = SynthBase.AugSpec.alpha_output_spec output_spec in
     let feasibility = Logger.g_with_increased_depth (fun () ->
         try
             let (last_updated, forward_result) =
                 if Global.t.cli_options.force_full_analysis then
-                    forward_analysis candidate [] AbstState.empty spec
+                    forward_analysis candidate [] AbstState.empty input_spec
                 else
-                    forward_analysis candidate plugged_spot prev_semantics spec
+                    forward_analysis candidate plugged_spot prev_semantics input_spec
             in
             let backward_starting_point  =
                 match BatOption.default plugged_spot last_updated with
@@ -152,15 +155,15 @@ let check_feasibility
             in
             let (_, backward_result) =
                 if Global.t.cli_options.force_full_analysis then
-                    (candidate, backward_analysis candidate [] forward_result spec)
+                    (candidate, backward_analysis candidate [] forward_result abst_output_spec)
                 else if Global.t.cli_options.no_backward then
                     (candidate, forward_result)
                 else
-                    (candidate, backward_analysis candidate backward_starting_point forward_result spec)
+                    (candidate, backward_analysis candidate backward_starting_point forward_result abst_output_spec)
             in
             if AbstState.has_bot backward_result then begin
                 Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "infeasible by backward: %s" (SynthLang.Grammar.string_of_rewrite candidate));
-                Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "  with %s" (SynthSpec.Specification.string_of_io_spec spec));
+                Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "  with %s" (string_of_list SynthBase.AugSpec.string_of_io_spec spec));
                 Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "  forward result: %s" (AbstState.to_string candidate forward_result));
                 Logger.g_in_debug_lazy (fun () -> Logger.g_debug_f "  backward result: %s" (AbstState.to_string candidate backward_result));
                 Infeasible

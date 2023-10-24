@@ -42,7 +42,7 @@ let make_ranged ?(iter_type: iter_type option = None) (lb: int) (ub: int) (comp:
     let ub = min comp.max_term_size ub in
     try
         let la = BatMap.find nt comp.nt_to_expr_size_ordered in
-        let llr = BatArray.to_list !la |> BatList.drop lb in
+        let llr = BatArray.to_list la |> BatList.drop lb in
         match llr with
         | [] -> empty()
         | h :: t ->

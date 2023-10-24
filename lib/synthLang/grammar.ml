@@ -132,10 +132,16 @@ and ret_type_of_func_rewrite (op: op) (operands: rewrite list): exprtype =
 		Bool
 	| GEN_CMP_OP _ ->
 		Bool
-	| GENERAL_FUNC op_str ->
-		if is_str_op op then
-			String
-		else Int
+	| INT_OP _ ->
+		Int
+	| STR_OP S_LEN | STR_OP S_STR_TO_INT | STR_OP S_INDEX_OF ->
+		Int
+	| STR_OP S_INT_TO_STR | STR_OP S_AT | STR_OP S_CONCAT | STR_OP S_REPLACE | STR_OP S_SUBSTR ->
+		String
+	| STR_OP S_PREFIX_OF | STR_OP S_SUFFIX_OF | STR_OP S_CONTAINS ->
+		Bool
+	| GENERAL_FUNC _ ->
+		failwith "ret_type_of_func_rewrite: GENERAL_FUNC"
 
 let normalized_func_rewrite (op: op) (children: rewrite list): rewrite =
 	let rec expr_children_or_none expr_children unchecked_children =
@@ -192,7 +198,7 @@ let get_nt_rule_list (grammar: grammar): (non_terminal * rewrite) list =
 			if (List.mem nt lst) then lst 
 			else lst @ [nt]  
 		) ntgraph []
-	in   
+	in
 	List.map (fun nt -> 
 		List.filter (fun (nt', _) -> is_equal_nt nt nt') nt_rule_list
 		(* (try BatMap.find nt grammar with _ -> failwith (string_of_rewrite nt))  *)

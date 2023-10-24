@@ -17,10 +17,6 @@ type const =
 	| CString of string
 	| CBool of bool
 
-type const_opt =
-	| CDontCare of exprtype
-	| CDefined of const
-
 (** program without nonterminal (=complete program) *)
 type expr =
 	| Param of int * exprtype (* position and type *)
@@ -46,6 +42,13 @@ let rec get_params (expr: expr): expr BatSet.t =
 	| Param _ -> BatSet.singleton expr 
 	| Function (_, exprs, _) ->
 		BatList.fold_left (fun acc e -> BatSet.union acc (get_params e)) BatSet.empty exprs 
+	| _ -> BatSet.empty
+
+let rec get_vars (expr: expr): expr BatSet.t =
+	match expr with
+	| Var _ -> BatSet.singleton expr 
+	| Function (_, exprs, _) ->
+		BatList.fold_left (fun acc e -> BatSet.union acc (get_vars e)) BatSet.empty exprs 
 	| _ -> BatSet.empty
 
 let get_trivial_value (ty: exprtype): const =
@@ -120,11 +123,6 @@ let string_of_const (const: const): string =
 			string_of_bv len i
 	| CString s -> "\"" ^ s ^ "\""
 	| CBool b -> string_of_bool b
-
-let string_of_const_opt (const_opt: const_opt): string =
-	match const_opt with
-	| CDontCare _ -> "*"
-	| CDefined const -> string_of_const const
 
 (* signature = desired input or output list from iospec. e.g.) sig.(0) == a number from first io pair *)
 type signature =
@@ -291,16 +289,29 @@ let get_bool (const: const): bool =
 	| CBool b -> b
 	| _ -> assert false
 
-let rec change_param_to_var (param2var: (expr, expr) BatMap.t) (expr: expr): expr =
+let rec change_param_to_expr (param2expr: (expr, expr) BatMap.t) (expr: expr): expr =
 	match expr with
 	| Param _ -> begin
 		try
-			BatMap.find expr param2var
+			BatMap.find expr param2expr
 		with _ ->
 			assert false
 	end
 	| Function (op, exprs, ty) ->
-		Function (op, List.map (change_param_to_var param2var) exprs, ty)
+		Function (op, List.map (change_param_to_expr param2expr) exprs, ty)
+	| _ ->
+		expr
+
+let rec change_var_to_expr (var2expr: (expr, expr) BatMap.t) (expr: expr): expr =
+	match expr with
+	| Var _ -> begin
+		try
+			BatMap.find expr var2expr
+		with _ ->
+			assert false
+	end
+	| Function (op, exprs, ty) ->
+		Function (op, List.map (change_var_to_expr var2expr) exprs, ty)
 	| _ ->
 		expr
 
@@ -312,7 +323,7 @@ let sexpstr_of_fun (args_map: (string, expr) BatMap.t) (name: string) (expr: exp
 			BatMap.add param_expr (Var(id, ty)) acc
 		) args_map BatMap.empty
 	in
-	let expr = change_param_to_var param2var expr in
+	let expr = change_param_to_expr param2var expr in
 	let params =
 		BatMap.foldi (fun id param_expr acc -> (id, param_expr) :: acc) args_map []
 		|> List.sort (fun (_, param_expr1) (_, param_expr2) -> (get_param_id param_expr1) - (get_param_id param_expr2))
@@ -329,6 +340,19 @@ let sexpstr_of_fun (args_map: (string, expr) BatMap.t) (name: string) (expr: exp
 		params_str
 		ret_type_str
 		(string_of_expr expr)
+
+let inline_function (expr: expr) (fun_id: Operators.op) (params: expr list) (fun_body: expr): expr =
+	let rec inline_sub (expr: expr): expr =
+		match expr with
+		| Function (op, operands, optype) ->
+			if op = fun_id && BatList.length operands = BatList.length params then
+				let subst_map = BatList.combine params operands |> BatList.to_seq |> BatMap.of_seq in
+				change_param_to_expr subst_map fun_body
+			else
+				Function (op, BatList.map inline_sub operands, optype)
+		| _ -> expr
+	in
+	inline_sub expr
 
 (** helpers for extracting ocaml values from signatures *)
 let extract_str_int (values: signature list): (string list * int list) =
@@ -370,83 +394,85 @@ let extract_int_int (values: signature list): (int list * int list) =
 (* string -> signature list -> signature *)
 let fun_apply_signature (op: op) (values: signature list): signature =
 	match op with
-	| GENERAL_FUNC op_str -> begin match op_str with
-		(** STRING theory **)
-		| "str.len" -> begin
+	| GENERAL_FUNC _ -> failwith ("not supported operator: " ^ (op_to_string op))
+	(** STRING theory **)
+	| STR_OP op_str -> begin match op_str with
+		| S_LEN -> begin
 			match values with
 			| SigString sl :: _ ->
 				SigInt (BatList.map BatString.length sl)
 			| _ ->
 				assert false
 		end
-		| "str.to.int" -> begin
+		| S_STR_TO_INT -> begin
 			match values with
-			| SigString sl :: _ ->
-				SigInt (BatList.map int_of_string sl)
+			| SigString sl :: _ -> begin try
+					SigInt (BatList.map int_of_string sl)
+				with Failure _ ->
+					raise UndefinedSemantics
+				end
 			| _ ->
 				assert false
 		end
-		| "int.to.str" -> begin
+		| S_INT_TO_STR -> begin
 			match values with
 			| SigInt il :: _ ->
 				SigString (BatList.map string_of_int il)
 			| _ -> assert false	
 		end
-		| "str.at" -> begin
+		| S_AT -> begin
 			let (strs, nums) = extract_str_int values in
-			SigString (List.map2 (fun str num -> Printf.sprintf "%c" str.[num]) strs nums)
+			SigString (List.map2 (fun str num ->
+					Printf.sprintf
+						"%c"
+						(if 0 <= num && num < BatString.length str then
+							str.[num]
+						else
+							raise UndefinedSemantics)
+				) strs nums)
 		end
-		| "str.++" -> begin
+		| S_CONCAT -> begin
 			let (str1s, str2s) = extract_str_str values in
 			SigString (List.map2 (^) str1s str2s) 
 		end
-		| "str.contains" -> begin
+		| S_CONTAINS -> begin
 			let (str1s, str2s) = extract_str_str values in
 			SigBool (List.map2 BatString.exists str1s str2s |> ImmBitVec.of_list)
 		end
-		| "str.prefixof" -> begin
+		| S_PREFIX_OF -> begin
 			let (str1s, str2s) = extract_str_str values in
 			SigBool (List.map2 (BatString.starts_with) str1s str2s |> ImmBitVec.of_list)
 		end
-		| "str.suffixof" -> begin
+		| S_SUFFIX_OF -> begin
 			let (str1s, str2s) = extract_str_str values in
 			SigBool (List.map2 (BatString.ends_with) str1s str2s |> ImmBitVec.of_list)
 		end
-		| "str.indexof" -> begin
+		| S_INDEX_OF -> begin
 			let (str1s, str2s, num1s) = extract_str_str_int values in
-			SigInt (map3 (fun str1 num1 str2 -> try BatString.find_from str1 num1 str2 with Not_found -> -1) str1s num1s str2s)
+			SigInt (map3 (fun str1 num1 str2 ->
+					try BatString.find_from str1 num1 str2
+					with
+						| Not_found -> -1
+						| Invalid_argument _ -> raise UndefinedSemantics) str1s num1s str2s
+			)
 		end
-		| "str.replace" -> begin
+		| S_REPLACE -> begin
 			let (str1s, str2s, str3s) = extract_str_str_str values in
 			SigString (map3 (fun str1 str2 str3 -> (Str.replace_first (Str.regexp_string str2) str3 str1)) str1s str2s str3s )
 		end
-		| "str.substr" -> begin
+		| S_SUBSTR -> begin
 			let (str1s, num1s, num2s) = extract_str_int_int values in
 			SigString (
 				map3 (fun str1 num1 num2 ->
-					let num2 = min (String.length str1 - num1) num2 in
-					try BatString.sub str1 num1 num2 with Invalid_argument _ -> ""
+					if String.length str1 - num1 < num2 then raise UndefinedSemantics
+					else
+						let num2 = min (String.length str1 - num1) num2 in
+						try BatString.sub str1 num1 num2 with Invalid_argument _ -> ""
 				) str1s num1s num2s
 			)
 		end
-		(** LIA theory **)
-		| "+" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (+) num1s num2s)
-		| "-" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (-) num1s num2s)
-		| "*" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 ( * ) num1s num2s)
-		| "/" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (/) num1s num2s)
-		| "%" ->
-			let (num1s, num2s) = extract_int_int values in
-			SigInt (List.map2 (mod) num1s num2s)
-		| _ -> failwith ("not supported operator: " ^ (op_to_string op))
 	end
+	(* end of STRING theory *)
 	| TRI_OP ITE -> begin
 		match values with
 		| SigBool bools :: SigInt sig1 :: SigInt sig2 :: _ ->
@@ -502,32 +528,41 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 		end
 	end
 	(** Bool theory **)
-	| BOOL_OP B_BIN_OP B_AND -> begin
-		match values with
-		| SigBool bools1 :: SigBool bools2 :: _ ->
-			SigBool (ImmBitVec.logand bools1 bools2)
-		| _ ->
-			assert false
-	end
-	| BOOL_OP B_BIN_OP B_OR -> begin
-		match values with
-		| SigBool bools1 :: SigBool bools2 :: _ ->
-			SigBool (ImmBitVec.logor bools1 bools2)
-		| _ ->
-			assert false
-	end
-	| BOOL_OP B_BIN_OP B_XOR -> begin
-		match values with
-		| SigBool bools1 :: SigBool bools2 :: _ ->
-			SigBool (ImmBitVec.logxor bools1 bools2)
-		| _ ->
-			assert false
-	end
-	| BOOL_OP B_UN_OP B_NOT -> begin
-		match values with
-		| SigBool bools1 :: _ ->
-			SigBool (ImmBitVec.lognot bools1)
-		| _ -> assert false
+	| BOOL_OP op_bool -> begin match op_bool with
+		| B_BIN_OP B_AND -> begin
+			match values with
+			| SigBool bools1 :: SigBool bools2 :: _ ->
+				SigBool (ImmBitVec.logand bools1 bools2)
+			| _ ->
+				assert false
+		end
+		| B_BIN_OP B_OR -> begin
+			match values with
+			| SigBool bools1 :: SigBool bools2 :: _ ->
+				SigBool (ImmBitVec.logor bools1 bools2)
+			| _ ->
+				assert false
+		end
+		| B_BIN_OP B_XOR -> begin
+			match values with
+			| SigBool bools1 :: SigBool bools2 :: _ ->
+				SigBool (ImmBitVec.logxor bools1 bools2)
+			| _ ->
+				assert false
+		end
+		| B_BIN_OP B_IMPLIES -> begin
+			match values with
+			| SigBool bools1 :: SigBool bools2 :: _ ->
+				SigBool (ImmBitVec.logor (ImmBitVec.lognot bools1) bools2)
+			| _ ->
+				assert false
+		end
+		| B_UN_OP B_NOT -> begin
+			match values with
+			| SigBool bools1 :: _ ->
+				SigBool (ImmBitVec.lognot bools1)
+			| _ -> assert false
+		end
 	end
 	(** BV theory **)
 	| BV_OP BV_UN_OP bv_un_op -> begin
@@ -600,6 +635,25 @@ let fun_apply_signature (op: op) (values: signature list): signature =
 				failwith (Printf.sprintf "bv length mismatch: %s bv%d bv%d" (Operators.op_to_string op) len1 len2)
 		| _ -> failwith "bitvec comparison operator needs exactly 2 bitvec operands"
 	end (* end of BV_OP *)
+	(** LIA theory **)
+	| INT_OP op_int -> begin match op_int with
+		| I_ADD ->
+			let (num1s, num2s) = extract_int_int values in
+			SigInt (List.map2 (+) num1s num2s)
+		| I_SUB ->
+			let (num1s, num2s) = extract_int_int values in
+			SigInt (List.map2 (-) num1s num2s)
+		| I_MUL ->
+			let (num1s, num2s) = extract_int_int values in
+			SigInt (List.map2 ( * ) num1s num2s)
+		| I_DIV ->
+			let (num1s, num2s) = extract_int_int values in
+			SigInt (List.map2 (/) num1s num2s)
+		| I_MOD ->
+			let (num1s, num2s) = extract_int_int values in
+			SigInt (List.map2 (mod) num1s num2s)
+	end
+	(** end of LIA theory **)
 
 (* param_valuation: (int, const list) BatMap.t *)
 (* ret type: const list *)
@@ -621,16 +675,16 @@ let rec evaluate_expr (spec_length: int) (param_valuation: (int, signature) BatM
 	| _ ->
 		failwith_f "evalute_expr to Var(%s): Var is only for SMT solver" (string_of_expr expr)
 
-let spec_to_param_map (spec: (const list * 'a) list): (int, signature) BatMap.t =
-	BatList.map fst spec
+let spec_to_param_map (spec: const list list): (int, signature) BatMap.t =
+	spec
 	|> BatList.transpose
 	|> zip_with_index
 	|> BatList.map (map_snd signature_of_const_list)
 	|> BatList.to_seq |> BatMap.of_seq
 
-let compute_signature (spec: (const list * 'a) list) (expr: expr): signature =
+let compute_signature (input_spec: const list list) (expr: expr): signature =
 	try
-		evaluate_expr (BatList.length spec) (spec_to_param_map spec) expr
+		evaluate_expr (BatList.length input_spec) (spec_to_param_map input_spec) expr
 	with _ ->
 		raise UndefinedSemantics
 
