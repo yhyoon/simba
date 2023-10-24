@@ -74,7 +74,7 @@ let rec cegis
 	in
 
 	Logger.g_info_f "** Proposed candidate: %s **" (Exprs.string_of_expr proposed_sol);
-	(* spec' = spec + first mismatched input-output examples *)
+	(* first: check pbe specs *)
 	let mismatched_opt =
 		BatList.find_opt (function
 				| (inputs, desired_output) -> begin
@@ -97,6 +97,7 @@ let rec cegis
 		else
 			cegis (SynthBase.AugSpec.add_cex_spec augmented_mismatched spec) forbidden_inputs
 	| None ->
+		(* second: check logic constraints *)
 		match Specification.verify forbidden_inputs false spec.syn_spec.target_function_id spec.syn_spec.args_list proposed_sol spec.sem_spec.original_spec with
 		| Some (cex, forbidden_inputs) -> begin
 			let aug_cex = match cex with
