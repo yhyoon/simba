@@ -100,20 +100,25 @@ let rec cegis
 		(* second: check logic constraints *)
 		match Specification.verify forbidden_inputs false spec.syn_spec.target_function_id spec.syn_spec.args_list proposed_sol spec.sem_spec.original_spec with
 		| Some (cex, forbidden_inputs) -> begin
-			let aug_cex = match cex with
+			let aug_cex_list = match cex with
 				| CexIO ex_io ->
-					SynthBase.AugSpec.aug_ex_io ex_io
+					[SynthBase.AugSpec.aug_ex_io ex_io]
 				| CexPred pred ->
 					SynthBase.AugSpec.alpha_predicate_constraint pred spec
 		  in
-			(* cex(input-output pair) from constraint verifier(solver) *)
-			Logger.g_info_f "add counter example: %s" (SynthBase.AugSpec.string_of_io_spec aug_cex); 
-			let _ = assert (not (List.mem aug_cex (spec.sem_spec.spec_cex))) in
+			let spec' =
+				BatList.fold_left (fun (spec: SynthBase.AugSpec.t) aug_cex ->
+						(* cex(input-output pair) from constraint verifier(solver) *)
+						Logger.g_info_f "add counter example: %s" (SynthBase.AugSpec.string_of_io_spec aug_cex); 
+						let _ = assert (not (List.mem aug_cex (spec.sem_spec.spec_cex))) in
+						SynthBase.AugSpec.add_cex_spec aug_cex spec
+					) spec aug_cex_list
+			in
 			if BatOption.default true Global.t.cli_options.cegis_jump then begin
-				cegis ~jump_to_prev_iter:jump_to_opt (SynthBase.AugSpec.add_cex_spec aug_cex spec) forbidden_inputs
+				cegis ~jump_to_prev_iter:jump_to_opt spec' forbidden_inputs
 			end
 			else
-				cegis (SynthBase.AugSpec.add_cex_spec aug_cex spec) forbidden_inputs
+				cegis spec' forbidden_inputs
 		end
 		| None -> begin
 			(* no more constraint -> found final solution *)
