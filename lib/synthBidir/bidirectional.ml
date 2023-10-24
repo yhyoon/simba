@@ -1144,7 +1144,7 @@ and main_loop
 				(Components.max_size components);
 			let prev_compo_max_size = Components.max_size components in
 			let rec force_progress (growing_cs: Components.component_pool) (next_target_size: int) =
-				if Components.max_size growing_cs <= Global.t.cli_options.max_comp_size then begin
+				if next_target_size <= Global.t.cli_options.max_comp_size then begin
 					let prev_compo_count = Components.get_num_total_components growing_cs in
 					let next_compo =
 						Logger.g_with_increased_depth (fun () ->
