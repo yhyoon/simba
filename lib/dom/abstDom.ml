@@ -23,6 +23,7 @@ module AbstSig = struct
     | BitVec64 of RedProd.t list            (* BitVec 64 *)
     | BitVec32 of RedProd.t list            (* BitVec 32 *)
     | BitVecGeneral of int * RedProd.t list (* BitVec n  *)
+    | Int of RedProd.t list                 (* Int using BitVec 64 - temporarily *)
     | Bool of ABoolSig.t                    (* Bool *)
     | Top                                   (* Full *)
 
@@ -35,6 +36,7 @@ module AbstSig = struct
             let module I = MaskedInt64(struct let size = len end) in
             let module P = RedProd.Make(I) in
             string_of_list P.to_string pl
+        | Int pl -> string_of_list RedProd64.to_string pl
         | Bool bl -> ABoolSig.to_string bl
         | Top -> "top"
 
@@ -44,6 +46,7 @@ module AbstSig = struct
         | BitVec64 _ -> Exprs.BV 64
         | BitVec32 _ -> Exprs.BV 32
         | BitVecGeneral (len, _) -> Exprs.BV len
+        | Int _ -> Exprs.Int
         | Bool _ -> Exprs.Bool
         | Top -> failwith "get_type: Top"
 
@@ -59,6 +62,7 @@ module AbstSig = struct
             let module I = MaskedInt64(struct let size = len end) in
             let module P = RedProd.Make(I) in
             BatList.exists P.is_bot pl
+        | Int pl -> BatList.exists RedProd64.is_bot pl
         | Bool bl -> ABoolSig.is_bot bl
         | Top -> false
 
@@ -76,6 +80,7 @@ module AbstSig = struct
                 BitVecGeneral (len1, BatList.map2 P.join pl1 pl2)
             else
                 Top
+        | Int pl1, Int pl2 -> Int (BatList.map2 RedProd64.join pl1 pl2)
         | Bool bl1, Bool bl2 -> 
             Bool (ABoolSig.join bl1 bl2)
         | _ -> Top
@@ -94,6 +99,7 @@ module AbstSig = struct
                 BitVecGeneral (len1, BatList.map2 P.meet pl1 pl2)
             else
                 Bot
+        | Int pl1, Int pl2 -> Int (BatList.map2 RedProd64.meet pl1 pl2)
         | Bool bl1, Bool bl2 -> 
             Bool (ABoolSig.meet bl1 bl2)
         | _ -> Bot
@@ -115,6 +121,8 @@ module AbstSig = struct
                 BatList.for_all2 P.leq pl1 pl2
             else
                 false
+        | Int pl1, Int pl2 ->
+            BatList.for_all2 RedProd64.leq pl1 pl2
         | Bool bl1, Bool bl2 -> 
             ABoolSig.leq bl1 bl2
         | _ -> false
@@ -135,6 +143,8 @@ module AbstSig = struct
         end
         | SigBool bl ->
             Bool (ABoolSig.alpha bl)
+        | SigInt il ->
+            Int (BatList.map RedProd64.from_int64 (BatList.map Int64.of_int il))
         | _ -> Bot
 
     let alphas (cl: Exprs.signature list): t =
@@ -164,6 +174,13 @@ module AbstSig = struct
                 match P.gamma_if_singleton p with
                 | Some c ->
                     (idx, c) :: acc_rev
+                | _ -> acc_rev
+            ) [] pl |> BatList.rev
+        | Int pl ->
+            BatList.fold_lefti (fun acc_rev idx p ->
+                match RedProd64.gamma_if_singleton p with
+                | Some (Exprs.CBV(64, c)) ->
+                    (idx, Exprs.CInt (Int64.to_int c)) :: acc_rev
                 | _ -> acc_rev
             ) [] pl |> BatList.rev
         | Bool bl ->
@@ -197,6 +214,13 @@ module AbstSig = struct
                     (idx, set) :: acc_rev
                 | _ -> acc_rev
             ) [] pl |> BatList.rev
+        | Int pl ->
+            BatList.fold_lefti (fun acc_rev idx p ->
+                match RedProd64.gamma_size_constraint max_size p with
+                | Some set ->
+                    (idx, set_flat_option_map (function (Exprs.CBV(64, c)) -> Some (Exprs.CInt (Int64.to_int c)) | _ -> None) set) :: acc_rev
+                | _ -> acc_rev
+            ) [] pl |> BatList.rev
         | Bool bl ->
             ABoolSig.gamma_size_constraint max_size bl
         | Top ->
@@ -215,6 +239,7 @@ module AbstSig = struct
             | BitVec64 pl :: _ -> (Exprs.BV 64, BatList.length pl)
             | BitVec32 pl :: _ -> (Exprs.BV 32, BatList.length pl)
             | BitVecGeneral (len, pl) :: _ -> (Exprs.BV len, BatList.length pl)
+            | Int pl :: _ -> (Exprs.Int, BatList.length pl)
             | Bool bl :: _ -> (Exprs.Bool, ABoolSig.length bl)
             | Top :: tail -> find_type_and_dim tail
         in
@@ -245,6 +270,14 @@ module AbstSig = struct
                     else raise OperandsMisType
                 | Bot -> raise OperandsBot
                 | Top -> (addr, BitVecGeneral (general_len, BatList.make sig_dim P.top_repr)) :: acc_rev
+                | _ -> raise OperandsMisType
+                ) [] args |> BatList.rev
+        | (Exprs.Int, sig_dim) ->
+            BatList.fold_left (fun acc_rev (addr, a) ->
+                match a with
+                | Int _ -> (addr, a) :: acc_rev
+                | Bot -> raise OperandsBot
+                | Top -> (addr, Int (BatList.make sig_dim RedProd64.top_repr)) :: acc_rev
                 | _ -> raise OperandsMisType
                 ) [] args |> BatList.rev
         | (Exprs.Bool, sig_dim) ->
@@ -284,6 +317,20 @@ module AbstSig = struct
                 raise OperationUnreachable
         | _ -> Bot (* bad type => empty semantics *)
     
+    (* Int using BitVec 64 - temporarily *)
+    let forward_int_bin_op (bop: Operators.int_op) (arg0: t) (arg1: t): t =
+        match arg0, arg1 with
+        | Int a0, Int a1 ->
+            let bop' = match bop with
+                | I_ADD -> Operators.BV_ADD
+                | I_SUB -> BV_SUB
+                | I_MUL -> BV_MUL
+                | I_DIV -> BV_SDIV
+                | I_MOD -> BV_SREM
+            in
+            Int (BatList.map2 (RedProd64.forward_bin_op bop') a0 a1)
+        | _ -> Bot (* bad type => empty semantics *)
+
     let forward_bool_un_op (uop: Operators.bool_un_op) (arg0: t): t =
         match arg0 with
         | Bool a0 ->
@@ -320,6 +367,14 @@ module AbstSig = struct
                     | _ -> fail_not_supported_op_expr op (BatList.map snd args)
                 in
                 forward_bv_bin_op bop arg0 arg1
+            | Operators.INT_OP bop ->
+                let arg0, arg1 =
+                    match normalize_args args with
+                    | (_, arg0) :: (_, arg1) :: [] ->
+                        (arg0, arg1)
+                    | _ -> fail_not_supported_op_expr op (BatList.map snd args)
+                in
+                forward_int_bin_op bop arg0 arg1
             | Operators.BOOL_OP Operators.B_UN_OP uop ->
                 let arg0 =
                     match normalize_args args with
@@ -378,6 +433,22 @@ module AbstSig = struct
         | _ ->
             (addr0, bot_repr), (addr1, bot_repr)
 
+    (* Int using BitVec 64 - temporarily *)    
+    let backward_int_bin_op (bop: Operators.int_op) ((_, post): addr * t) ((addr0, arg0): addr * t) ((addr1, arg1): addr * t): (addr * t) * (addr * t) =
+        match post, arg0, arg1 with
+        | Int p, Int a0, Int a1 ->
+            let bop' = match bop with
+                | I_ADD -> Operators.BV_ADD
+                | I_SUB -> BV_SUB
+                | I_MUL -> BV_MUL
+                | I_DIV -> BV_SDIV
+                | I_MOD -> BV_SREM
+            in
+            let (p0, p1) = map3 (RedProd64.backward_bin_op bop') p a0 a1 |> BatList.split in
+            ((addr0, Int p0), (addr1, Int p1))
+        | _ ->
+            (addr0, bot_repr), (addr1, bot_repr)
+
     let backward_bool_un_op (uop: Operators.bool_un_op) ((addr, post): addr * t) ((addr0, arg0): addr * t): addr * t =
         match post, arg0 with
         | Bool p, Bool a0 ->
@@ -403,6 +474,9 @@ module AbstSig = struct
                     [p0]
                 | Operators.BV_OP Operators.BV_BIN_OP bop, arg0 :: arg1 :: [] ->
                     let (p0, p1) = backward_bv_bin_op bop post arg0 arg1 in
+                    [p0; p1]
+                | Operators.INT_OP bop, arg0 :: arg1 :: [] ->
+                    let (p0, p1) = backward_int_bin_op bop post arg0 arg1 in
                     [p0; p1]
                 | Operators.BOOL_OP Operators.B_UN_OP uop, arg0 :: [] ->
                     let p0 = backward_bool_un_op uop post arg0 in

@@ -156,6 +156,12 @@ let add_set_map (k: 'a) (v: 'b) (k_vset_map: ('a, 'b BatSet.t) BatMap.t): ('a, '
     in
 	  BatMap.add k new_set k_vset_map
 
+let set_flat_option_map (f: 'a -> 'b option) (set: 'a BatSet.t): 'b BatSet.t =
+    BatSet.fold (fun e acc -> BatOption.map_default (fun x -> BatSet.add x acc) acc (f e)) set BatSet.empty
+
+let set_flat_map (f: 'a -> 'b BatSet.t) (set: 'a BatSet.t): 'b BatSet.t =
+    BatSet.fold (fun e acc -> BatSet.union (f e) acc) set BatSet.empty
+
 let option_or (x: 'a option) (y: 'a option): 'a option =
     match x, y with
     | Some x', _ -> Some x'
