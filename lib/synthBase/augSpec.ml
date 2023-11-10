@@ -29,6 +29,7 @@ and abst_output_spec =
     | AOBV64 of RedProd.t
     | AOBV32 of RedProd.t
     | AOBV of int * RedProd.t
+    | AOInt of RedProd.t
     | AOBool of Dom.ABitSeq.Elem.t
 
 type io_spec = ex_input * output_spec
@@ -47,6 +48,8 @@ let string_of_output_spec (output_spec: output_spec): string =
         let module I = Int64Util.MaskedInt64(struct let size = len end) in
         let module P = RedProd.Make(I) in
         P.to_string r
+    | OAbstract AOInt r ->
+        RedProd64.to_string r
     | OAbstract AOBool b ->
         Dom.ABitSeq.Elem.to_string b
 
@@ -63,6 +66,7 @@ let type_of_output_spec (output_spec: output_spec): Exprs.exprtype =
     | OAbstract AOBV64 r -> Exprs.BV 64
     | OAbstract AOBV32 r -> Exprs.BV 32
     | OAbstract AOBV (len, r) -> Exprs.BV len
+    | OAbstract AOInt r -> Exprs.Int
     | OAbstract AOBool b -> Exprs.Bool
 
 let alpha_output_spec (output_specs: output_spec list): AbstSig.t =
@@ -94,6 +98,13 @@ let alpha_output_spec (output_specs: output_spec list): AbstSig.t =
                     | _ -> failwith_f "signature_of_const_list(%s in CBV list): kind mismatch" (string_of_output_spec c)
                 ) output_specs)
     end
+    | OConcrete Exprs.CInt _ :: _ | ODontCare Int :: _ ->
+        Int (BatList.map (fun c -> match c with
+                | OConcrete (Exprs.CInt i) -> RedProd64.from_int64 (Int64.of_int i)
+                | ODontCare _ -> RedProd64.top_repr
+                | OAbstract AOInt x -> x
+                | _ -> failwith_f "signature_of_const_list(%s in CInt list): kind mismatch" (string_of_output_spec c)
+            ) output_specs)
     | OConcrete CBool _ :: _ | ODontCare Exprs.Bool :: _ ->
         Bool (Dom.ABoolSig.of_list (BatList.map (fun c -> match c with
                 | OConcrete (Exprs.CBool b) -> Elem.from_bool false b

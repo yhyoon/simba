@@ -281,15 +281,6 @@ module Make(I: MaskedInt64Type) = struct
     let forward_srem ((s1, _, _): t) ((s2, _, _): t): t =
         reduction (S.forward_rem s1 s2, U.top_repr, B.top_repr)
 
-    (* TODO: first operand of ite is not bitvec! *)
-    let forward_ite ((s1, u1, b1): t) ((s2, u2, b2): t) ((s3, u3, b3): t): t =
-        if S.zero = s1 || U.zero = u1 || B.zero = b1 then
-            (s3, u3, b3)
-        else if not (S.leq S.zero s1) || not (U.leq U.zero u1) || not (B.leq B.zero b1) then
-            (s2, u2, b2)
-        else
-            join (s2, u2, b2) (s3, u3, b3)
-
     let forward_un_op (uop: Operators.bv_un_op) (arg0: t): t =
         let uf = match uop with
             | BV_NOT -> forward_not
@@ -314,18 +305,6 @@ module Make(I: MaskedInt64Type) = struct
             | BV_SREM -> forward_srem
         in
         bf arg0 arg1
-
-    let forward_operation (op: Operators.op) (args: t list): t =
-        match op, args with
-        | Operators.BV_OP Operators.BV_UN_OP uop, arg0 :: [] ->
-            forward_un_op uop arg0
-        | Operators.BV_OP Operators.BV_BIN_OP bop, arg0 :: arg1 :: [] ->
-            forward_bin_op bop arg0 arg1
-        | _ ->
-            failwith (Printf.sprintf "not supported forward operation: operator %s with %d operands"
-                (Operators.op_to_string op)
-                (BatList.length args)
-            )
 
     let backward_not ((post_s,post_u,post_b): t) ((s1,u1,b1): t): t =
         meet (s1,u1,b1) (forward_not (post_s,post_u,post_b)) |> reduction
@@ -795,11 +774,8 @@ module Make(I: MaskedInt64Type) = struct
         (join assume_pos_d1' assume_neg_neg_d1' |> meet d1 |> reduction,
         d2' |> meet d2 |> reduction)
 
-    (** TODO *)
-    let backward_ite (post: t) (d1: t) (d2: t) (d3: t): (t * t * t) = (d1, d2, d3)
-
     let backward_un_op (uop: Operators.bv_un_op) (post: t) (d: t): t =
-        let uf = 
+        let uf =
             match uop with
             | BV_NEG -> backward_neg
             | BV_NOT -> backward_not
