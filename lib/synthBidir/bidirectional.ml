@@ -603,22 +603,7 @@ let rec compose_for_sketch
 				(PRUNE_NO, CompEnum.empty())
 			else
 				let index_and_consts =
-					if Global.t.cli_options.search2 then
-						match Analyzer.AbstState.lookup addr sems with
-						| Bool bl ->
-							Dom.ABoolSig.gamma_size_constraint Global.t.cli_options.gamma_size bl
-						| Bot ->
-							[(0, BatSet.empty)]
-						| Top ->
-							[]
-						| bv ->
-							SigSearch.consts_matching_bv_partial_sig
-								(BatMap.find nt synth_ctx_compose.ctx_main.components.nt_sig_search)
-								(min_cur_compo_size, max_cur_compo_size)
-								Global.t.cli_options.gamma_size
-								bv
-					else
-						Dom.AbstDom.AbstSig.gamma_size_constraint Global.t.cli_options.gamma_size (Analyzer.AbstState.lookup addr sems)
+					Dom.AbstDom.AbstSig.gamma_size_constraint Global.t.cli_options.gamma_size (Analyzer.AbstState.lookup addr sems)
 				in
 				(* let _ =
 					let from_normal_gamma = Dom.AbstDom.AbstSig.gamma_size_constraint Global.t.cli_options.gamma_size (Analyzer.AbstState.lookup addr sems) in
