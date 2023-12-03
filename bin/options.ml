@@ -29,7 +29,12 @@ let options = [
 			| _ -> HeuristicScore1
 		), "How to ordering predicates in dt learning(ent1: normal entropy, ent2: heuristic entropy, heu1: heuristic score) (default: heu1)");
 	("-no_backward", Arg.Unit (fun () -> o.no_backward <- true), "Disable backward analysis and do only forward analysis in pruning abstsem mode(only for experiment)");
-	("-search2", Arg.Unit (fun () -> o.search2 <- true), "Do concretization refereing component signatures (experimental, default=false)");
+	("-compo_search", Arg.String (fun s ->
+		  match s with
+			| "no" -> o.compo_search <- NoCompoSearch
+			| "alter" -> o.compo_search <- AlternativeCompoSearch
+			| _ -> o.compo_search <- DefaultCompoSearch
+		), "Component searching type(no: iterate all components, alter: do concretization refereing component signatures(experimental)) (default: selecitve concretization based search)");
 	("-z3_seed", Arg.Int (fun n -> o.z3_seed <- n), "Set random seed of Z3 SAT solver (default=0)");
 	("-force_full_analysis", Arg.Unit (fun () -> o.force_full_analysis <- true), "Do not reuse prev analysis result in static analysis (only for experiment)");
 	("-record_prune_count", Arg.Unit (fun () -> o.record_prune_count <- true), "Count approximated iterations pruned by concretization-based component pick(only for experiment)");

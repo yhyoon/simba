@@ -24,7 +24,7 @@ and cli_options = {
     mutable cegis_jump          : bool option;
     mutable dt_predicate_order  : dt_predicate_order;
     mutable no_backward         : bool;
-    mutable search2             : bool;
+    mutable compo_search        : compo_search;
     mutable z3_seed             : int;
     mutable force_full_analysis : bool;
     mutable z3cli               : string option;
@@ -71,6 +71,10 @@ and dt_predicate_order =
     | NormalEntropy
     | FastEntropy
     | HeuristicScore1
+and compo_search =
+    | DefaultCompoSearch
+    | AlternativeCompoSearch
+    | NoCompoSearch
 
 let cegis_iter_initial = {count_top=BatMap.empty; count_sub=BatMap.empty; compo_pool_size=0}
 
@@ -93,7 +97,7 @@ let t: t = {
         pruning_mode        = "abstsem";
         cegis_jump          = None;
         no_backward         = false;
-        search2             = false;
+        compo_search        = DefaultCompoSearch;
         z3_seed             = 0;
         force_full_analysis = false;
         z3cli               = None;

@@ -603,7 +603,14 @@ let rec compose_for_sketch
 				(PRUNE_NO, CompEnum.empty())
 			else
 				let index_and_consts =
-					if Global.t.cli_options.search2 then
+					match Global.t.cli_options.compo_search with
+					| DefaultCompoSearch ->
+						Dom.AbstDom.AbstSig.gamma_size_constraint
+							Global.t.cli_options.gamma_size
+							(Analyzer.AbstState.lookup addr sems)
+					| NoCompoSearch ->
+						[]
+					| AlternativeCompoSearch -> begin
 						match Analyzer.AbstState.lookup addr sems with
 						| Bool bl ->
 							Dom.ABoolSig.gamma_size_constraint Global.t.cli_options.gamma_size bl
@@ -617,8 +624,7 @@ let rec compose_for_sketch
 								(min_cur_compo_size, max_cur_compo_size)
 								Global.t.cli_options.gamma_size
 								bv
-					else
-						Dom.AbstDom.AbstSig.gamma_size_constraint Global.t.cli_options.gamma_size (Analyzer.AbstState.lookup addr sems)
+					end
 				in
 				(* let _ =
 					let from_normal_gamma = Dom.AbstDom.AbstSig.gamma_size_constraint Global.t.cli_options.gamma_size (Analyzer.AbstState.lookup addr sems) in
